@@ -1,0 +1,14 @@
+[
+  {
+    "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-app",
+    "location": "westeurope",
+    "name": "rg-app",
+    "tags": { "env": "prod" }
+  },
+  {
+    "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-net",
+    "location": "westeurope",
+    "name": "rg-net",
+    "tags": null
+  }
+]

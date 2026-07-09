@@ -1,0 +1,32 @@
+[
+  {
+    "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-app/providers/Microsoft.Network/networkInterfaces/nic-web-01",
+    "ipConfigurations": [
+      {
+        "privateIpAddress": "10.0.0.4",
+        "publicIpAddress": {
+          "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-app/providers/Microsoft.Network/publicIPAddresses/pip-web"
+        },
+        "subnet": {
+          "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-net/providers/Microsoft.Network/virtualNetworks/vnet-hub/subnets/snet-a"
+        }
+      },
+      {
+        "privateIPAddress": "10.0.9.9",
+        "subnet": {
+          "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-net/providers/Microsoft.Network/virtualNetworks/vnet-ghost/subnets/snet-missing"
+        }
+      }
+    ],
+    "name": "nic-web-01",
+    "virtualMachine": {
+      "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-app/providers/Microsoft.Compute/virtualMachines/vm-web-01"
+    }
+  },
+  {
+    "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-app/providers/Microsoft.Network/networkInterfaces/nic-ghost",
+    "ipConfigurations": [],
+    "name": "nic-ghost",
+    "virtualMachine": null
+  }
+]
