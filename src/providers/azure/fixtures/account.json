@@ -1,0 +1,12 @@
+{
+  "environmentName": "AzureCloud",
+  "id": "00000000-0000-0000-0000-000000000001",
+  "isDefault": true,
+  "name": "Contoso Production",
+  "state": "Enabled",
+  "tenantId": "11111111-1111-1111-1111-111111111111",
+  "user": {
+    "name": "dev@contoso.com",
+    "type": "user"
+  }
+}

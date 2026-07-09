@@ -1,0 +1,43 @@
+[
+  {
+    "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/RG-APP/providers/Microsoft.Compute/virtualMachines/vm-web-01",
+    "location": "westeurope",
+    "name": "vm-web-01",
+    "resourceGroup": "RG-App",
+    "tags": { "role": "web" },
+    "type": "Microsoft.Compute/virtualMachines"
+  },
+  {
+    "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-app/providers/Microsoft.Network/networkInterfaces/nic-web-01",
+    "location": "westeurope",
+    "name": "nic-web-01",
+    "resourceGroup": "rg-app",
+    "tags": null,
+    "type": "Microsoft.Network/networkInterfaces"
+  },
+  {
+    "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-app/providers/Microsoft.Network/publicIPAddresses/pip-web",
+    "location": "westeurope",
+    "name": "pip-web",
+    "resourceGroup": "rg-app",
+    "tags": null,
+    "type": "Microsoft.Network/publicIPAddresses"
+  },
+  {
+    "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-net/providers/Microsoft.Network/virtualNetworks/vnet-hub",
+    "location": "westeurope",
+    "name": "vnet-hub",
+    "resourceGroup": "rg-net",
+    "tags": null,
+    "type": "Microsoft.Network/virtualNetworks"
+  },
+  {
+    "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-orphan/providers/Microsoft.Storage/storageAccounts/ststray",
+    "location": "northeurope",
+    "name": "ststray",
+    "resourceGroup": "rg-orphan",
+    "sku": { "name": "Standard_LRS" },
+    "tags": null,
+    "type": "Microsoft.Storage/storageAccounts"
+  }
+]
