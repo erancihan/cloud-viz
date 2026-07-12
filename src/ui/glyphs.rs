@@ -10,14 +10,22 @@ pub fn draw(painter: &Painter, rect: Rect, category: ResourceCategory, color: Co
     let o = rect.min;
     let p = |x: f32, y: f32| Pos2::new(o.x + x * s, o.y + y * s);
     let stroke = Stroke::new((1.5 * s).max(1.0), color);
-    let line = |pts: &[(f32, f32)]| Shape::line(pts.iter().map(|&(x, y)| p(x, y)).collect(), stroke);
-    let closed = |pts: &[(f32, f32)]| Shape::closed_line(pts.iter().map(|&(x, y)| p(x, y)).collect(), stroke);
+    let line =
+        |pts: &[(f32, f32)]| Shape::line(pts.iter().map(|&(x, y)| p(x, y)).collect(), stroke);
+    let closed = |pts: &[(f32, f32)]| {
+        Shape::closed_line(pts.iter().map(|&(x, y)| p(x, y)).collect(), stroke)
+    };
     let dot = |x: f32, y: f32, r: f32| Shape::circle_filled(p(x, y), r * s, color);
 
     use ResourceCategory::*;
     match category {
         Compute => {
-            painter.add(closed(&[(4.5, 4.5), (11.5, 4.5), (11.5, 11.5), (4.5, 11.5)]));
+            painter.add(closed(&[
+                (4.5, 4.5),
+                (11.5, 4.5),
+                (11.5, 11.5),
+                (4.5, 11.5),
+            ]));
             painter.add(Shape::rect_filled(
                 Rect::from_min_max(p(7.0, 7.0), p(9.0, 9.0)),
                 0.0,
@@ -45,7 +53,12 @@ pub fn draw(painter: &Painter, rect: Rect, category: ResourceCategory, color: Co
             painter.add(line(&[(5.3, 12.0), (10.7, 12.0)]));
         }
         Storage => {
-            painter.add(closed(&[(2.5, 4.0), (13.5, 4.0), (13.5, 12.0), (2.5, 12.0)]));
+            painter.add(closed(&[
+                (2.5, 4.0),
+                (13.5, 4.0),
+                (13.5, 12.0),
+                (2.5, 12.0),
+            ]));
             painter.add(line(&[(2.5, 8.5), (13.5, 8.5)]));
             painter.add(dot(5.0, 10.3, 0.8));
         }
@@ -58,12 +71,31 @@ pub fn draw(painter: &Painter, rect: Rect, category: ResourceCategory, color: Co
             }));
             painter.add(line(&[(3.2, 4.0), (3.2, 12.0)]));
             painter.add(line(&[(12.8, 4.0), (12.8, 12.0)]));
-            painter.add(arc(p(8.0, 12.0), 4.8 * s, 1.9 * s, 0.0, std::f32::consts::PI, stroke));
-            painter.add(arc(p(8.0, 8.0), 4.8 * s, 1.9 * s, 0.0, std::f32::consts::PI, stroke));
+            painter.add(arc(
+                p(8.0, 12.0),
+                4.8 * s,
+                1.9 * s,
+                0.0,
+                std::f32::consts::PI,
+                stroke,
+            ));
+            painter.add(arc(
+                p(8.0, 8.0),
+                4.8 * s,
+                1.9 * s,
+                0.0,
+                std::f32::consts::PI,
+                stroke,
+            ));
         }
         Containers => {
             for (x, y) in [(2.8, 2.8), (8.6, 2.8), (2.8, 8.6), (8.6, 8.6)] {
-                painter.add(closed(&[(x, y), (x + 4.6, y), (x + 4.6, y + 4.6), (x, y + 4.6)]));
+                painter.add(closed(&[
+                    (x, y),
+                    (x + 4.6, y),
+                    (x + 4.6, y + 4.6),
+                    (x, y + 4.6),
+                ]));
             }
         }
         Security => {
@@ -80,8 +112,22 @@ pub fn draw(painter: &Painter, rect: Rect, category: ResourceCategory, color: Co
             painter.add(line(&[(6.2, 8.0), (7.5, 9.3), (9.9, 6.7)]));
         }
         Integration => {
-            painter.add(arc(p(8.0, 8.0), 5.0 * s, 5.0 * s, std::f32::consts::PI, 0.15, stroke));
-            painter.add(arc(p(8.0, 8.0), 5.0 * s, 5.0 * s, 0.0, std::f32::consts::PI + 0.15, stroke));
+            painter.add(arc(
+                p(8.0, 8.0),
+                5.0 * s,
+                5.0 * s,
+                std::f32::consts::PI,
+                0.15,
+                stroke,
+            ));
+            painter.add(arc(
+                p(8.0, 8.0),
+                5.0 * s,
+                5.0 * s,
+                0.0,
+                std::f32::consts::PI + 0.15,
+                stroke,
+            ));
             painter.add(line(&[(13.0, 1.6), (13.0, 4.0), (10.6, 4.0)]));
             painter.add(line(&[(3.0, 14.4), (3.0, 12.0), (5.4, 12.0)]));
         }

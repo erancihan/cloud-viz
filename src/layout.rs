@@ -47,7 +47,10 @@ impl Rect {
     }
     #[cfg(test)]
     pub fn intersects(&self, other: &Rect) -> bool {
-        self.x < other.right() && other.x < self.right() && self.y < other.bottom() && other.y < self.bottom()
+        self.x < other.right()
+            && other.x < self.right()
+            && self.y < other.bottom()
+            && other.y < self.bottom()
     }
     pub fn union(&self, other: &Rect) -> Rect {
         let x = self.x.min(other.x);
@@ -102,10 +105,18 @@ pub fn layout_topology(topology: &Topology) -> Layout {
 
     let nodes = &topology.nodes;
 
-    fn subtree_size(i: usize, nodes: &[TopologyNode], children_of: &HashMap<&str, Vec<usize>>) -> usize {
+    fn subtree_size(
+        i: usize,
+        nodes: &[TopologyNode],
+        children_of: &HashMap<&str, Vec<usize>>,
+    ) -> usize {
         1 + children_of
             .get(nodes[i].id.as_str())
-            .map(|kids| kids.iter().map(|&k| subtree_size(k, nodes, children_of)).sum())
+            .map(|kids| {
+                kids.iter()
+                    .map(|&k| subtree_size(k, nodes, children_of))
+                    .sum()
+            })
             .unwrap_or(0)
     }
 
@@ -120,7 +131,11 @@ pub fn layout_topology(topology: &Topology) -> Layout {
             cb.cmp(&ca)
                 .then_with(|| {
                     if ca && cb {
-                        subtree_size(b, nodes, &children_of).cmp(&subtree_size(a, nodes, &children_of))
+                        subtree_size(b, nodes, &children_of).cmp(&subtree_size(
+                            a,
+                            nodes,
+                            &children_of,
+                        ))
                     } else {
                         na.category.sort_rank().cmp(&nb.category.sort_rank())
                     }
@@ -139,14 +154,25 @@ pub fn layout_topology(topology: &Topology) -> Layout {
         let kids = children_of.get(node.id.as_str());
         match kids {
             None => {
-                let (w, h) = if node.container { (EMPTY_W, EMPTY_H) } else { (LEAF_W, LEAF_H) };
-                Measured { node_index: i, w, h, children: Vec::new() }
+                let (w, h) = if node.container {
+                    (EMPTY_W, EMPTY_H)
+                } else {
+                    (LEAF_W, LEAF_H)
+                };
+                Measured {
+                    node_index: i,
+                    w,
+                    h,
+                    children: Vec::new(),
+                }
             }
             Some(kids) => {
                 let mut order = kids.clone();
                 sort_children(&mut order);
-                let boxes: Vec<Measured> =
-                    order.iter().map(|&k| measure(k, nodes, children_of, sort_children)).collect();
+                let boxes: Vec<Measured> = order
+                    .iter()
+                    .map(|&k| measure(k, nodes, children_of, sort_children))
+                    .collect();
                 let (placed, w, h) = shelf_pack(boxes, GAP);
                 Measured {
                     node_index: i,
@@ -184,7 +210,12 @@ pub fn layout_topology(topology: &Topology) -> Layout {
         by_id.insert(node.id.clone(), placed.len());
         placed.push(PlacedNode {
             index: m.node_index,
-            rect: Rect { x, y, w: m.w, h: m.h },
+            rect: Rect {
+                x,
+                y,
+                w: m.w,
+                h: m.h,
+            },
             is_container: !m.children.is_empty() || node.container,
             child_count: children_of.get(node.id.as_str()).map_or(0, |k| k.len()),
         });
@@ -201,9 +232,18 @@ pub fn layout_topology(topology: &Topology) -> Layout {
         .iter()
         .map(|p| p.rect)
         .reduce(|a, b| a.union(&b))
-        .unwrap_or(Rect { x: 0.0, y: 0.0, w: 0.0, h: 0.0 });
+        .unwrap_or(Rect {
+            x: 0.0,
+            y: 0.0,
+            w: 0.0,
+            h: 0.0,
+        });
 
-    Layout { placed, by_id, bounds }
+    Layout {
+        placed,
+        by_id,
+        bounds,
+    }
 }
 
 /// Places boxes onto left-to-right shelves, wrapping at a target width chosen
@@ -257,7 +297,11 @@ mod tests {
         for p in &layout.placed {
             let node = &topo.nodes[p.index];
             if let Some(parent) = node.parent_id.as_deref() {
-                assert!(seen.contains(parent), "{} painted before its parent", node.id);
+                assert!(
+                    seen.contains(parent),
+                    "{} painted before its parent",
+                    node.id
+                );
             }
             seen.insert(node.id.as_str());
         }

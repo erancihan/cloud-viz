@@ -7,17 +7,24 @@ use crate::providers::{builtin_providers, CloudProvider};
 use crate::theme::{self, Theme, ThemeKind};
 use crate::ui::canvas::{self, Camera};
 use crate::ui::{c32, c32a};
-use eframe::egui::{
-    self, Align, ComboBox, Context, FontId, Layout as EguiLayout, RichText, Ui,
-};
+use eframe::egui::{self, Align, ComboBox, Context, FontId, Layout as EguiLayout, RichText, Ui};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::Arc;
 use std::thread;
 
 enum WorkerMsg {
-    Status { generation: u64, status: ProviderStatus },
-    Scopes { generation: u64, result: Result<Vec<ScopeOption>, ProviderError> },
-    Topology { generation: u64, result: Result<Topology, ProviderError> },
+    Status {
+        generation: u64,
+        status: ProviderStatus,
+    },
+    Scopes {
+        generation: u64,
+        result: Result<Vec<ScopeOption>, ProviderError>,
+    },
+    Topology {
+        generation: u64,
+        result: Result<Topology, ProviderError>,
+    },
 }
 
 enum Phase {
@@ -98,9 +105,15 @@ impl CloudVizApp {
             }
             let scopes = provider.list_scopes();
             let default_scope = scopes.as_ref().ok().and_then(|s| {
-                s.iter().find(|o| o.is_default).or(s.first()).map(|o| o.id.clone())
+                s.iter()
+                    .find(|o| o.is_default)
+                    .or(s.first())
+                    .map(|o| o.id.clone())
             });
-            let _ = tx.send(WorkerMsg::Scopes { generation, result: scopes });
+            let _ = tx.send(WorkerMsg::Scopes {
+                generation,
+                result: scopes,
+            });
             repaint();
             let result = provider.fetch_topology(default_scope.as_deref());
             let _ = tx.send(WorkerMsg::Topology { generation, result });
@@ -128,34 +141,43 @@ impl CloudVizApp {
     fn drain_worker_messages(&mut self) {
         while let Ok(msg) = self.rx.try_recv() {
             match msg {
-                WorkerMsg::Status { generation, status } if generation == self.generation => match status {
-                    ProviderStatus::Ok { account_label, detail } => {
-                        self.account_detail = Some(detail.unwrap_or(account_label));
-                        self.phase = Phase::Working("Loading subscriptions…");
+                WorkerMsg::Status { generation, status } if generation == self.generation => {
+                    match status {
+                        ProviderStatus::Ok {
+                            account_label,
+                            detail,
+                        } => {
+                            self.account_detail = Some(detail.unwrap_or(account_label));
+                            self.phase = Phase::Working("Loading subscriptions…");
+                        }
+                        ProviderStatus::Failed(err) => self.phase = Phase::Failed(err),
                     }
-                    ProviderStatus::Failed(err) => self.phase = Phase::Failed(err),
-                },
-                WorkerMsg::Scopes { generation, result } if generation == self.generation => match result {
-                    Ok(scopes) => {
-                        self.scope_id = scopes
-                            .iter()
-                            .find(|s| s.is_default)
-                            .or(scopes.first())
-                            .map(|s| s.id.clone());
-                        self.scopes = scopes;
-                        self.phase = Phase::Working("Fetching topology…");
+                }
+                WorkerMsg::Scopes { generation, result } if generation == self.generation => {
+                    match result {
+                        Ok(scopes) => {
+                            self.scope_id = scopes
+                                .iter()
+                                .find(|s| s.is_default)
+                                .or(scopes.first())
+                                .map(|s| s.id.clone());
+                            self.scopes = scopes;
+                            self.phase = Phase::Working("Fetching topology…");
+                        }
+                        Err(err) => self.phase = Phase::Failed(err),
                     }
-                    Err(err) => self.phase = Phase::Failed(err),
-                },
-                WorkerMsg::Topology { generation, result } if generation == self.generation => match result {
-                    Ok(topology) => {
-                        self.layout = Some(layout_topology(&topology));
-                        self.topology = Some(topology);
-                        self.camera = Camera::default(); // triggers fit-to-view
-                        self.phase = Phase::Ready;
+                }
+                WorkerMsg::Topology { generation, result } if generation == self.generation => {
+                    match result {
+                        Ok(topology) => {
+                            self.layout = Some(layout_topology(&topology));
+                            self.topology = Some(topology);
+                            self.camera = Camera::default(); // triggers fit-to-view
+                            self.phase = Phase::Ready;
+                        }
+                        Err(err) => self.phase = Phase::Failed(err),
                     }
-                    Err(err) => self.phase = Phase::Failed(err),
-                },
+                }
                 _ => {} // stale generation
             }
         }
@@ -171,10 +193,19 @@ impl CloudVizApp {
     fn toolbar(&mut self, ui: &mut Ui, ctx: &Context) {
         ui.horizontal(|ui| {
             ui.add_space(4.0);
-            ui.label(RichText::new("CloudViz").font(FontId::proportional(16.0)).strong().color(c32(self.theme.accent)));
+            ui.label(
+                RichText::new("CloudViz")
+                    .font(FontId::proportional(16.0))
+                    .strong()
+                    .color(c32(self.theme.accent)),
+            );
             ui.add_space(12.0);
 
-            ui.label(RichText::new("PROVIDER").size(10.0).color(c32(self.theme.ink_3)));
+            ui.label(
+                RichText::new("PROVIDER")
+                    .size(10.0)
+                    .color(c32(self.theme.ink_3)),
+            );
             let mut selected_idx = self.provider_idx;
             ComboBox::from_id_salt("provider")
                 .selected_text(self.providers[self.provider_idx].info().display_name)
@@ -187,7 +218,11 @@ impl CloudVizApp {
 
             if !self.scopes.is_empty() {
                 ui.add_space(8.0);
-                ui.label(RichText::new("SUBSCRIPTION").size(10.0).color(c32(self.theme.ink_3)));
+                ui.label(
+                    RichText::new("SUBSCRIPTION")
+                        .size(10.0)
+                        .color(c32(self.theme.ink_3)),
+                );
                 let current_label = self
                     .scopes
                     .iter()
@@ -214,7 +249,13 @@ impl CloudVizApp {
 
             ui.add_space(8.0);
             let working = matches!(self.phase, Phase::Working(_));
-            if ui.add_enabled(!working, egui::Button::new(if working { "Loading…" } else { "⟳ Refresh" })).clicked() {
+            if ui
+                .add_enabled(
+                    !working,
+                    egui::Button::new(if working { "Loading…" } else { "⟳ Refresh" }),
+                )
+                .clicked()
+            {
                 self.start_topology_fetch(ctx.clone());
             }
             if ui.button("Fit view").clicked() {
@@ -223,9 +264,17 @@ impl CloudVizApp {
 
             ui.with_layout(EguiLayout::right_to_left(Align::Center), |ui| {
                 ui.add_space(4.0);
-                let label = if self.theme.kind == ThemeKind::Dark { "Light mode" } else { "Dark mode" };
+                let label = if self.theme.kind == ThemeKind::Dark {
+                    "Light mode"
+                } else {
+                    "Dark mode"
+                };
                 if ui.button(label).clicked() {
-                    self.theme = if self.theme.kind == ThemeKind::Dark { theme::LIGHT } else { theme::DARK };
+                    self.theme = if self.theme.kind == ThemeKind::Dark {
+                        theme::LIGHT
+                    } else {
+                        theme::DARK
+                    };
                     apply_visuals(ctx, &self.theme);
                 }
                 if let Some(detail) = &self.account_detail {
@@ -243,18 +292,27 @@ impl CloudVizApp {
                     let resources = t
                         .nodes
                         .iter()
-                        .filter(|n| !matches!(n.category, ResourceCategory::Scope | ResourceCategory::Group))
+                        .filter(|n| {
+                            !matches!(
+                                n.category,
+                                ResourceCategory::Scope | ResourceCategory::Group
+                            )
+                        })
                         .count();
-                    ui.label(RichText::new(format!(
-                        "{}  ·  {}  ·  {} resources  ·  {} connections",
-                        self.providers[self.provider_idx].info().display_name,
-                        t.scope_label,
-                        resources,
-                        t.edges.len()
-                    )).color(muted));
+                    ui.label(
+                        RichText::new(format!(
+                            "{}  ·  {}  ·  {} resources  ·  {} connections",
+                            self.providers[self.provider_idx].info().display_name,
+                            t.scope_label,
+                            resources,
+                            t.edges.len()
+                        ))
+                        .color(muted),
+                    );
                     if !t.warnings.is_empty() {
                         ui.label(
-                            RichText::new(format!("⚠ {} warnings", t.warnings.len())).color(c32(self.theme.warn)),
+                            RichText::new(format!("⚠ {} warnings", t.warnings.len()))
+                                .color(c32(self.theme.warn)),
                         )
                         .on_hover_text(t.warnings.join("\n"));
                     }
@@ -270,8 +328,12 @@ impl CloudVizApp {
     }
 
     fn details_panel(&mut self, ctx: &Context) {
-        let Some(selected) = self.selected else { return };
-        let Some(topology) = &self.topology else { return };
+        let Some(selected) = self.selected else {
+            return;
+        };
+        let Some(topology) = &self.topology else {
+            return;
+        };
         let Some(node) = topology.nodes.get(selected).cloned() else {
             self.selected = None;
             return;
@@ -295,11 +357,16 @@ impl CloudVizApp {
                     });
                     let cat = self.theme.category_color(node.category);
                     ui.horizontal(|ui| {
-                        let (rect, _) = ui.allocate_exact_size(egui::Vec2::splat(9.0), egui::Sense::hover());
+                        let (rect, _) =
+                            ui.allocate_exact_size(egui::Vec2::splat(9.0), egui::Sense::hover());
                         ui.painter().circle_filled(rect.center(), 4.0, c32(cat));
                         ui.label(
-                            RichText::new(format!("{} · {}", node.kind_label, node.category.label()))
-                                .color(c32(self.theme.ink_2)),
+                            RichText::new(format!(
+                                "{} · {}",
+                                node.kind_label,
+                                node.category.label()
+                            ))
+                            .color(c32(self.theme.ink_2)),
                         );
                     });
                     ui.add_space(8.0);
@@ -307,9 +374,15 @@ impl CloudVizApp {
 
                     let mut row = |key: &str, value: &str, mono: bool| {
                         ui.add_space(6.0);
-                        ui.label(RichText::new(key.to_uppercase()).size(10.0).color(c32(self.theme.ink_3)));
+                        ui.label(
+                            RichText::new(key.to_uppercase())
+                                .size(10.0)
+                                .color(c32(self.theme.ink_3)),
+                        );
                         let text = if mono {
-                            RichText::new(value).font(FontId::monospace(11.0)).color(c32(self.theme.ink_2))
+                            RichText::new(value)
+                                .font(FontId::monospace(11.0))
+                                .color(c32(self.theme.ink_2))
                         } else {
                             RichText::new(value).color(c32(self.theme.ink))
                         };
@@ -340,7 +413,14 @@ impl CloudVizApp {
             .show(ctx, |ui| {
                 match (&self.topology, &self.layout, &self.phase) {
                     (Some(topology), Some(layout), _) => {
-                        let output = canvas::show(ui, &mut self.camera, topology, layout, &theme, self.selected);
+                        let output = canvas::show(
+                            ui,
+                            &mut self.camera,
+                            topology,
+                            layout,
+                            &theme,
+                            self.selected,
+                        );
                         if let Some(idx) = output.clicked_node {
                             self.selected = Some(idx);
                         } else if output.clicked_background {
@@ -376,7 +456,13 @@ impl CloudVizApp {
             });
     }
 
-    fn error_screen(&self, ui: &mut Ui, err: &ProviderError, retry: &mut bool, open_demo: &mut bool) {
+    fn error_screen(
+        &self,
+        ui: &mut Ui,
+        err: &ProviderError,
+        retry: &mut bool,
+        open_demo: &mut bool,
+    ) {
         let theme = &self.theme;
         let provider_name = self.providers[self.provider_idx].info().display_name;
         let (title, body): (String, String) = match err.code {
@@ -393,7 +479,12 @@ impl CloudVizApp {
 
         ui.vertical_centered(|ui| {
             ui.add_space(ui.available_height() * 0.3);
-            ui.label(RichText::new(title).font(FontId::proportional(18.0)).strong().color(c32(theme.ink)));
+            ui.label(
+                RichText::new(title)
+                    .font(FontId::proportional(18.0))
+                    .strong()
+                    .color(c32(theme.ink)),
+            );
             ui.add_space(6.0);
             ui.label(RichText::new(body).color(c32(theme.ink_2)));
             if err.code == ProviderErrorCode::NotAuthenticated {

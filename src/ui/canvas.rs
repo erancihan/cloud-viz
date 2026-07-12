@@ -19,7 +19,11 @@ pub struct Camera {
 
 impl Default for Camera {
     fn default() -> Self {
-        Self { pan: Vec2::ZERO, zoom: 1.0, needs_fit: true }
+        Self {
+            pan: Vec2::ZERO,
+            zoom: 1.0,
+            needs_fit: true,
+        }
     }
 }
 
@@ -79,7 +83,9 @@ pub fn show(
     let hovered = if pointer_over_minimap {
         None
     } else {
-        response.hover_pos().and_then(|p| hit_test(p, layout, &world_rect))
+        response
+            .hover_pos()
+            .and_then(|p| hit_test(p, layout, &world_rect))
     };
     if hovered.is_some() {
         ui.ctx().set_cursor_icon(CursorIcon::PointingHand);
@@ -89,12 +95,23 @@ pub fn show(
     // then leaf cards, so relaxed curves never cover node content.
     for placed in &layout.placed {
         if placed.is_container {
-            draw_container(&painter, topology, placed, &world_rect(&placed.rect), theme, camera.zoom, selected == Some(placed.index));
+            draw_container(
+                &painter,
+                topology,
+                placed,
+                &world_rect(&placed.rect),
+                theme,
+                camera.zoom,
+                selected == Some(placed.index),
+            );
         }
     }
 
     for (edge_index, edge) in topology.edges.iter().enumerate() {
-        let (Some(&si), Some(&ti)) = (layout.by_id.get(&edge.source), layout.by_id.get(&edge.target)) else {
+        let (Some(&si), Some(&ti)) = (
+            layout.by_id.get(&edge.source),
+            layout.by_id.get(&edge.target),
+        ) else {
             continue;
         };
         draw_edge(
@@ -113,12 +130,31 @@ pub fn show(
     for placed in &layout.placed {
         if !placed.is_container {
             let is_selected = selected == Some(placed.index);
-            let is_hovered = hovered.map(|h| std::ptr::eq(&layout.placed[h], placed)).unwrap_or(false);
-            draw_card(&painter, topology, placed, &world_rect(&placed.rect), theme, camera.zoom, is_selected, is_hovered);
+            let is_hovered = hovered
+                .map(|h| std::ptr::eq(&layout.placed[h], placed))
+                .unwrap_or(false);
+            draw_card(
+                &painter,
+                topology,
+                placed,
+                &world_rect(&placed.rect),
+                theme,
+                camera.zoom,
+                is_selected,
+                is_hovered,
+            );
         }
     }
 
-    draw_minimap(&painter, minimap_rect, rect, layout, topology, theme, camera);
+    draw_minimap(
+        &painter,
+        minimap_rect,
+        rect,
+        layout,
+        topology,
+        theme,
+        camera,
+    );
     if pointer_over_minimap && (response.dragged() || response.clicked()) {
         if let Some(pos) = response.interact_pointer_pos() {
             center_on_minimap_point(camera, pos, minimap_rect, rect, layout);
@@ -126,12 +162,13 @@ pub fn show(
     }
 
     let clicked_node = if response.clicked() && !pointer_over_minimap {
-        response.interact_pointer_pos().and_then(|p| hit_test(p, layout, &world_rect))
+        response
+            .interact_pointer_pos()
+            .and_then(|p| hit_test(p, layout, &world_rect))
     } else {
         None
     };
-    let clicked_background =
-        response.clicked() && !pointer_over_minimap && clicked_node.is_none();
+    let clicked_background = response.clicked() && !pointer_over_minimap && clicked_node.is_none();
 
     CanvasOutput {
         clicked_node: clicked_node.map(|i| layout.placed[i].index),
@@ -139,7 +176,13 @@ pub fn show(
     }
 }
 
-fn handle_camera_input(ui: &Ui, camera: &mut Camera, response: &Response, rect: Rect, over_minimap: bool) {
+fn handle_camera_input(
+    ui: &Ui,
+    camera: &mut Camera,
+    response: &Response,
+    rect: Rect,
+    over_minimap: bool,
+) {
     if response.dragged() && !over_minimap {
         camera.pan += response.drag_delta();
     }
@@ -219,17 +262,33 @@ fn draw_container(
     let is_scope = node.category == ResourceCategory::Scope;
     let rounding = 12.0 * zoom;
 
-    let fill = if is_scope { theme.surface } else { mix(cat, theme.surface, 0.05) };
+    let fill = if is_scope {
+        theme.surface
+    } else {
+        mix(cat, theme.surface, 0.05)
+    };
     painter.rect_filled(*rect, rounding, c32(fill));
 
-    let stroke = Stroke::new(1.5, if is_scope { c32(theme.hairline) } else { c32a(cat, 128) });
+    let stroke = Stroke::new(
+        1.5,
+        if is_scope {
+            c32(theme.hairline)
+        } else {
+            c32a(cat, 128)
+        },
+    );
     if is_scope {
         painter.rect_stroke(*rect, rounding, stroke, StrokeKind::Inside);
     } else {
         dashed_rect(painter, rect, stroke, 7.0, 6.0);
     }
     if selected {
-        painter.rect_stroke(rect.expand(2.0), rounding, Stroke::new(2.0, c32(theme.accent)), StrokeKind::Outside);
+        painter.rect_stroke(
+            rect.expand(2.0),
+            rounding,
+            Stroke::new(2.0, c32(theme.accent)),
+            StrokeKind::Outside,
+        );
     }
 
     // Header: KIND · name · count. Skip text when zoomed out too far to read.
@@ -288,10 +347,24 @@ fn draw_card(
     let rounding = 10.0 * zoom;
 
     painter.rect_filled(*rect, rounding, c32(theme.card));
-    let border = if hovered { c32(theme.ink_3) } else { c32(theme.hairline) };
-    painter.rect_stroke(*rect, rounding, Stroke::new(1.0, border), StrokeKind::Inside);
+    let border = if hovered {
+        c32(theme.ink_3)
+    } else {
+        c32(theme.hairline)
+    };
+    painter.rect_stroke(
+        *rect,
+        rounding,
+        Stroke::new(1.0, border),
+        StrokeKind::Inside,
+    );
     if selected {
-        painter.rect_stroke(rect.expand(2.0), rounding, Stroke::new(2.0, c32(theme.accent)), StrokeKind::Outside);
+        painter.rect_stroke(
+            rect.expand(2.0),
+            rounding,
+            Stroke::new(2.0, c32(theme.accent)),
+            StrokeKind::Outside,
+        );
     }
 
     // Category accent bar on the left edge.
@@ -313,15 +386,36 @@ fn draw_card(
         Vec2::splat(chip_size),
     );
     painter.rect_filled(chip, 8.0 * zoom, c32a(cat, 36));
-    glyphs::draw(painter, chip.shrink(chip_size * 0.25), node.category, c32(cat));
+    glyphs::draw(
+        painter,
+        chip.shrink(chip_size * 0.25),
+        node.category,
+        c32(cat),
+    );
 
     let tx = chip.right() + 12.0 * zoom;
     let max_w = rect.right() - 10.0 * zoom - tx;
     let name_font = FontId::proportional((12.5 * zoom).max(6.0));
     let kind_font = FontId::proportional((11.0 * zoom).max(5.0));
     let cy = rect.center().y;
-    draw_truncated(painter, Pos2::new(tx, cy - 2.0 * zoom), Align2::LEFT_BOTTOM, &node.name, name_font, c32(theme.ink), max_w);
-    draw_truncated(painter, Pos2::new(tx, cy + 2.0 * zoom), Align2::LEFT_TOP, &node.kind_label, kind_font, c32(theme.ink_3), max_w);
+    draw_truncated(
+        painter,
+        Pos2::new(tx, cy - 2.0 * zoom),
+        Align2::LEFT_BOTTOM,
+        &node.name,
+        name_font,
+        c32(theme.ink),
+        max_w,
+    );
+    draw_truncated(
+        painter,
+        Pos2::new(tx, cy + 2.0 * zoom),
+        Align2::LEFT_TOP,
+        &node.kind_label,
+        kind_font,
+        c32(theme.ink_3),
+        max_w,
+    );
 }
 
 fn draw_truncated(
@@ -337,7 +431,11 @@ fn draw_truncated(
     let galley = painter.layout_no_wrap(shown.clone(), font.clone(), color);
     if galley.rect.width() > max_width {
         let keep = ((max_width / galley.rect.width()) * text.chars().count() as f32) as usize;
-        shown = text.chars().take(keep.saturating_sub(1).max(1)).collect::<String>() + "…";
+        shown = text
+            .chars()
+            .take(keep.saturating_sub(1).max(1))
+            .collect::<String>()
+            + "…";
     }
     painter.text(pos, anchor, shown, font, color);
 }
@@ -356,7 +454,11 @@ fn draw_edge(
 ) {
     let path = route_edge(source, target);
     let stroke = Stroke::new(1.6 * camera.zoom.max(0.5), c32(theme.edge));
-    let points: Vec<Pos2> = path.flatten(36).iter().map(|v| to_screen(v.x, v.y)).collect();
+    let points: Vec<Pos2> = path
+        .flatten(36)
+        .iter()
+        .map(|v| to_screen(v.x, v.y))
+        .collect();
 
     if kind == EdgeKind::Network {
         painter.extend(Shape::dashed_line(&points, stroke, 7.0, 5.0));
@@ -374,7 +476,11 @@ fn draw_edge(
     // Labels earn their pixels only when readable.
     if let Some(label) = label {
         if camera.zoom >= 0.45 {
-            let t = if path.loop_under { 0.5 } else { label_t(edge_index) };
+            let t = if path.loop_under {
+                0.5
+            } else {
+                label_t(edge_index)
+            };
             let mid = path.point_at(t);
             let pos = to_screen(mid.x, mid.y);
             let font = FontId::proportional((10.0 * camera.zoom).max(6.0));
@@ -409,7 +515,12 @@ fn draw_minimap(
     camera: &Camera,
 ) {
     painter.rect_filled(map, 8.0, c32(theme.surface));
-    painter.rect_stroke(map, 8.0, Stroke::new(1.0, c32(theme.hairline)), StrokeKind::Inside);
+    painter.rect_stroke(
+        map,
+        8.0,
+        Stroke::new(1.0, c32(theme.hairline)),
+        StrokeKind::Inside,
+    );
 
     let b = layout.bounds;
     if b.w <= 0.0 || b.h <= 0.0 {
@@ -433,7 +544,12 @@ fn draw_minimap(
         let node = &topology.nodes[placed.index];
         let r = project(&placed.rect);
         if placed.is_container {
-            painter.rect_stroke(r, 2.0, Stroke::new(0.6, c32a(theme.ink_3, 90)), StrokeKind::Inside);
+            painter.rect_stroke(
+                r,
+                2.0,
+                Stroke::new(0.6, c32a(theme.ink_3, 90)),
+                StrokeKind::Inside,
+            );
         } else {
             painter.rect_filled(r, 1.0, c32(theme.category_color(node.category)));
         }
@@ -448,11 +564,22 @@ fn draw_minimap(
     };
     let view_r = project(&view).intersect(map.shrink(2.0));
     if view_r.is_positive() {
-        painter.rect_stroke(view_r, 2.0, Stroke::new(1.2, c32(theme.accent)), StrokeKind::Inside);
+        painter.rect_stroke(
+            view_r,
+            2.0,
+            Stroke::new(1.2, c32(theme.accent)),
+            StrokeKind::Inside,
+        );
     }
 }
 
-fn center_on_minimap_point(camera: &mut Camera, pos: Pos2, map: Rect, canvas: Rect, layout: &Layout) {
+fn center_on_minimap_point(
+    camera: &mut Camera,
+    pos: Pos2,
+    map: Rect,
+    canvas: Rect,
+    layout: &Layout,
+) {
     let b = layout.bounds;
     if b.w <= 0.0 || b.h <= 0.0 {
         return;
