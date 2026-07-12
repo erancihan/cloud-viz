@@ -68,10 +68,16 @@ pub fn type_label(resource_type: &str) -> String {
         ("microsoft.network/virtualnetworks", "Virtual network"),
         ("microsoft.network/virtualnetworks/subnets", "Subnet"),
         ("microsoft.network/networkinterfaces", "Network interface"),
-        ("microsoft.network/networksecuritygroups", "Network security group"),
+        (
+            "microsoft.network/networksecuritygroups",
+            "Network security group",
+        ),
         ("microsoft.network/publicipaddresses", "Public IP address"),
         ("microsoft.network/loadbalancers", "Load balancer"),
-        ("microsoft.network/applicationgateways", "Application gateway"),
+        (
+            "microsoft.network/applicationgateways",
+            "Application gateway",
+        ),
         ("microsoft.network/dnszones", "DNS zone"),
         ("microsoft.network/privatednszones", "Private DNS zone"),
         ("microsoft.network/natgateways", "NAT gateway"),
@@ -82,17 +88,32 @@ pub fn type_label(resource_type: &str) -> String {
         ("microsoft.storage/storageaccounts", "Storage account"),
         ("microsoft.sql/servers", "SQL server"),
         ("microsoft.sql/servers/databases", "SQL database"),
-        ("microsoft.dbforpostgresql/flexibleservers", "PostgreSQL server"),
+        (
+            "microsoft.dbforpostgresql/flexibleservers",
+            "PostgreSQL server",
+        ),
         ("microsoft.dbformysql/flexibleservers", "MySQL server"),
         ("microsoft.documentdb/databaseaccounts", "Cosmos DB account"),
         ("microsoft.cache/redis", "Redis cache"),
         ("microsoft.containerservice/managedclusters", "AKS cluster"),
-        ("microsoft.containerregistry/registries", "Container registry"),
-        ("microsoft.containerinstance/containergroups", "Container instances"),
+        (
+            "microsoft.containerregistry/registries",
+            "Container registry",
+        ),
+        (
+            "microsoft.containerinstance/containergroups",
+            "Container instances",
+        ),
         ("microsoft.app/containerapps", "Container app"),
-        ("microsoft.app/managedenvironments", "Container Apps environment"),
+        (
+            "microsoft.app/managedenvironments",
+            "Container Apps environment",
+        ),
         ("microsoft.keyvault/vaults", "Key vault"),
-        ("microsoft.managedidentity/userassignedidentities", "Managed identity"),
+        (
+            "microsoft.managedidentity/userassignedidentities",
+            "Managed identity",
+        ),
         ("microsoft.servicebus/namespaces", "Service Bus namespace"),
         ("microsoft.eventhub/namespaces", "Event Hubs namespace"),
         ("microsoft.eventgrid/topics", "Event Grid topic"),
@@ -100,9 +121,15 @@ pub fn type_label(resource_type: &str) -> String {
         ("microsoft.web/sites", "App Service"),
         ("microsoft.web/serverfarms", "App Service plan"),
         ("microsoft.web/staticsites", "Static web app"),
-        ("microsoft.operationalinsights/workspaces", "Log Analytics workspace"),
+        (
+            "microsoft.operationalinsights/workspaces",
+            "Log Analytics workspace",
+        ),
         ("microsoft.insights/components", "Application Insights"),
-        ("microsoft.recoveryservices/vaults", "Recovery Services vault"),
+        (
+            "microsoft.recoveryservices/vaults",
+            "Recovery Services vault",
+        ),
     ];
     let lower = resource_type.to_lowercase();
     if let Some((_, label)) = KNOWN.iter().find(|(t, _)| *t == lower) {
@@ -129,7 +156,11 @@ pub fn build_topology(inv: AzureInventory) -> Topology {
     let mut edges: Vec<TopologyEdge> = Vec::new();
     let mut edge_ids: HashSet<String> = HashSet::new();
 
-    fn add_node(nodes: &mut Vec<TopologyNode>, index: &mut HashMap<String, usize>, node: TopologyNode) {
+    fn add_node(
+        nodes: &mut Vec<TopologyNode>,
+        index: &mut HashMap<String, usize>,
+        node: TopologyNode,
+    ) {
         if !index.contains_key(&node.id) {
             index.insert(node.id.clone(), nodes.len());
             nodes.push(node);
@@ -186,30 +217,31 @@ pub fn build_topology(inv: AzureInventory) -> Topology {
     }
 
     // Resources can reference an RG the group listing didn't return — synthesize it.
-    let mut ensure_rg = |name: &str, nodes: &mut Vec<TopologyNode>, index: &mut HashMap<String, usize>| -> String {
-        let key = name.to_lowercase();
-        if let Some(id) = rg_id_by_name.get(&key) {
-            return id.clone();
-        }
-        let id = format!("{subscription_id}/resourcegroups/{key}");
-        rg_id_by_name.insert(key, id.clone());
-        add_node(
-            nodes,
-            index,
-            TopologyNode {
-                id: id.clone(),
-                name: name.to_string(),
-                kind: "azure/resourceGroup".into(),
-                kind_label: "Resource group".into(),
-                category: ResourceCategory::Group,
-                parent_id: Some(subscription_id.clone()),
-                container: true,
-                region: None,
-                metadata: Vec::new(),
-            },
-        );
-        id
-    };
+    let mut ensure_rg =
+        |name: &str, nodes: &mut Vec<TopologyNode>, index: &mut HashMap<String, usize>| -> String {
+            let key = name.to_lowercase();
+            if let Some(id) = rg_id_by_name.get(&key) {
+                return id.clone();
+            }
+            let id = format!("{subscription_id}/resourcegroups/{key}");
+            rg_id_by_name.insert(key, id.clone());
+            add_node(
+                nodes,
+                index,
+                TopologyNode {
+                    id: id.clone(),
+                    name: name.to_string(),
+                    kind: "azure/resourceGroup".into(),
+                    kind_label: "Resource group".into(),
+                    category: ResourceCategory::Group,
+                    parent_id: Some(subscription_id.clone()),
+                    container: true,
+                    region: None,
+                    metadata: Vec::new(),
+                },
+            );
+            id
+        };
 
     // Flat resource inventory.
     for resource in &inv.resources {
@@ -283,10 +315,9 @@ pub fn build_topology(inv: AzureInventory) -> Topology {
             }
         }
         for subnet in &vnet.subnets {
-            let prefix = subnet
-                .address_prefix
-                .clone()
-                .or_else(|| (!subnet.address_prefixes.is_empty()).then(|| subnet.address_prefixes.join(", ")));
+            let prefix = subnet.address_prefix.clone().or_else(|| {
+                (!subnet.address_prefixes.is_empty()).then(|| subnet.address_prefixes.join(", "))
+            });
             add_node(
                 &mut nodes,
                 &mut index,
@@ -299,14 +330,21 @@ pub fn build_topology(inv: AzureInventory) -> Topology {
                     parent_id: Some(vnet_id.clone()),
                     container: false,
                     region: None,
-                    metadata: prefix.map(|p| ("addressPrefix".to_string(), p)).into_iter().collect(),
+                    metadata: prefix
+                        .map(|p| ("addressPrefix".to_string(), p))
+                        .into_iter()
+                        .collect(),
                 },
             );
         }
     }
 
     // NICs stitch the graph together: VM -> NIC -> subnet / public IP.
-    let mut add_edge = |source: String, target: String, kind: EdgeKind, label: &str, edges: &mut Vec<TopologyEdge>| {
+    let mut add_edge = |source: String,
+                        target: String,
+                        kind: EdgeKind,
+                        label: &str,
+                        edges: &mut Vec<TopologyEdge>| {
         if source == target || !index.contains_key(&source) || !index.contains_key(&target) {
             return;
         }
@@ -328,14 +366,36 @@ pub fn build_topology(inv: AzureInventory) -> Topology {
             continue; // NIC absent from resource listing; skip rather than invent
         }
         if let Some(vm) = nic.virtual_machine.as_ref().and_then(|v| v.id.as_deref()) {
-            add_edge(norm(vm), nic_id.clone(), EdgeKind::Association, "attached", &mut edges);
+            add_edge(
+                norm(vm),
+                nic_id.clone(),
+                EdgeKind::Association,
+                "attached",
+                &mut edges,
+            );
         }
         for ip_config in &nic.ip_configurations {
             if let Some(subnet) = ip_config.subnet.as_ref().and_then(|s| s.id.as_deref()) {
-                add_edge(nic_id.clone(), norm(subnet), EdgeKind::Network, "in subnet", &mut edges);
+                add_edge(
+                    nic_id.clone(),
+                    norm(subnet),
+                    EdgeKind::Network,
+                    "in subnet",
+                    &mut edges,
+                );
             }
-            if let Some(pip) = ip_config.public_ip_address.as_ref().and_then(|p| p.id.as_deref()) {
-                add_edge(nic_id.clone(), norm(pip), EdgeKind::Association, "public IP", &mut edges);
+            if let Some(pip) = ip_config
+                .public_ip_address
+                .as_ref()
+                .and_then(|p| p.id.as_deref())
+            {
+                add_edge(
+                    nic_id.clone(),
+                    norm(pip),
+                    EdgeKind::Association,
+                    "public IP",
+                    &mut edges,
+                );
             }
         }
     }
@@ -350,7 +410,9 @@ pub fn build_topology(inv: AzureInventory) -> Topology {
     }
 }
 
-fn tags_metadata(tags: &Option<std::collections::BTreeMap<String, String>>) -> Vec<(String, String)> {
+fn tags_metadata(
+    tags: &Option<std::collections::BTreeMap<String, String>>,
+) -> Vec<(String, String)> {
     tags.iter()
         .flatten()
         .map(|(k, v)| (format!("tag:{k}"), v.clone()))
@@ -385,7 +447,11 @@ mod tests {
     #[test]
     fn creates_subscription_root_with_resource_groups() {
         let t = build();
-        let sub = t.nodes.iter().find(|n| n.kind == "azure/subscription").unwrap();
+        let sub = t
+            .nodes
+            .iter()
+            .find(|n| n.kind == "azure/subscription")
+            .unwrap();
         assert_eq!(sub.id, SUB);
         assert!(sub.container);
 
@@ -407,7 +473,10 @@ mod tests {
         let t = build();
         // fixture uses resourceGroup "RG-App" while the group listing says "rg-app"
         let vm = find(&t, "vm-web-01");
-        assert_eq!(vm.parent_id.as_deref(), Some(&format!("{SUB}/resourcegroups/rg-app")[..]));
+        assert_eq!(
+            vm.parent_id.as_deref(),
+            Some(&format!("{SUB}/resourcegroups/rg-app")[..])
+        );
         assert_eq!(vm.category, ResourceCategory::Compute);
     }
 
@@ -426,21 +495,34 @@ mod tests {
         let t = build();
         let vnet = find(&t, "vnet-hub");
         assert!(vnet.container);
-        assert!(vnet.metadata.iter().any(|(k, v)| k == "addressSpace" && v == "10.0.0.0/16"));
+        assert!(vnet
+            .metadata
+            .iter()
+            .any(|(k, v)| k == "addressSpace" && v == "10.0.0.0/16"));
 
-        let subnets: Vec<&TopologyNode> = t.nodes.iter().filter(|n| n.kind_label == "Subnet").collect();
+        let subnets: Vec<&TopologyNode> = t
+            .nodes
+            .iter()
+            .filter(|n| n.kind_label == "Subnet")
+            .collect();
         assert_eq!(subnets.len(), 2);
         for s in &subnets {
             assert_eq!(s.parent_id.as_deref(), Some(vnet.id.as_str()));
         }
-        assert!(subnets[0].metadata.iter().any(|(k, v)| k == "addressPrefix" && v == "10.0.0.0/24"));
+        assert!(subnets[0]
+            .metadata
+            .iter()
+            .any(|(k, v)| k == "addressPrefix" && v == "10.0.0.0/24"));
     }
 
     #[test]
     fn derives_vm_nic_subnet_and_public_ip_edges() {
         let t = build();
         let with_label = |label: &str| -> Vec<&TopologyEdge> {
-            t.edges.iter().filter(|e| e.label.as_deref() == Some(label)).collect()
+            t.edges
+                .iter()
+                .filter(|e| e.label.as_deref() == Some(label))
+                .collect()
         };
 
         let attached = with_label("attached");
@@ -463,8 +545,16 @@ mod tests {
         let t = build();
         let ids: HashSet<&str> = t.nodes.iter().map(|n| n.id.as_str()).collect();
         for e in &t.edges {
-            assert!(ids.contains(e.source.as_str()), "unknown source {}", e.source);
-            assert!(ids.contains(e.target.as_str()), "unknown target {}", e.target);
+            assert!(
+                ids.contains(e.source.as_str()),
+                "unknown source {}",
+                e.source
+            );
+            assert!(
+                ids.contains(e.target.as_str()),
+                "unknown target {}",
+                e.target
+            );
         }
         // the fixture NIC references a subnet in a vnet that does not exist
         assert!(!t.edges.iter().any(|e| e.target.contains("snet-missing")));
@@ -501,7 +591,10 @@ mod tests {
 
     #[test]
     fn type_label_curated_and_fallback() {
-        assert_eq!(type_label("Microsoft.Compute/virtualMachines"), "Virtual machine");
+        assert_eq!(
+            type_label("Microsoft.Compute/virtualMachines"),
+            "Virtual machine"
+        );
         assert_eq!(type_label("microsoft.web/sites"), "App Service");
         assert_eq!(type_label("Vendor.Foo/widgetFactories"), "Widget factories");
     }

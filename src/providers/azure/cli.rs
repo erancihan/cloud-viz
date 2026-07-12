@@ -81,9 +81,17 @@ fn new_az_command() -> Command {
 
 fn looks_signed_out(stderr: &str) -> bool {
     let lower = stderr.to_lowercase();
-    ["az login", "aadsts", "refresh token", "re-authenticate", "reauthenticate", "no subscriptions found", "credentials have expired"]
-        .iter()
-        .any(|needle| lower.contains(needle))
+    [
+        "az login",
+        "aadsts",
+        "refresh token",
+        "re-authenticate",
+        "reauthenticate",
+        "no subscriptions found",
+        "credentials have expired",
+    ]
+    .iter()
+    .any(|needle| lower.contains(needle))
 }
 
 /// Runs an az command and parses its JSON output.
