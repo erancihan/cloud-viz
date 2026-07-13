@@ -57,5 +57,50 @@
     "resourceGroup": "rg-net",
     "tags": null,
     "type": "Microsoft.Network/networkSecurityGroups"
+  },
+  {
+    "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-app/providers/Microsoft.Compute/virtualMachines/vm-web-01/extensions/AADSSHLoginForLinux",
+    "location": "westeurope",
+    "name": "vm-web-01/AADSSHLoginForLinux",
+    "resourceGroup": "rg-app",
+    "tags": null,
+    "type": "Microsoft.Compute/virtualMachines/extensions"
+  },
+  {
+    "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-app/providers/Microsoft.Compute/disks/disk-orphan",
+    "location": "westeurope",
+    "managedBy": null,
+    "name": "disk-orphan",
+    "resourceGroup": "rg-app",
+    "sku": { "name": "Standard_LRS" },
+    "tags": null,
+    "type": "Microsoft.Compute/disks"
+  },
+  {
+    "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-app/providers/Microsoft.Web/serverFarms/plan-portal",
+    "location": "westeurope",
+    "name": "plan-portal",
+    "resourceGroup": "rg-app",
+    "sku": { "name": "P1v3", "tier": "PremiumV3" },
+    "tags": null,
+    "type": "Microsoft.Web/serverFarms"
+  },
+  {
+    "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-app/providers/Microsoft.Web/sites/app-portal",
+    "kind": "app,linux",
+    "location": "westeurope",
+    "name": "app-portal",
+    "resourceGroup": "rg-app",
+    "tags": null,
+    "type": "Microsoft.Web/sites"
+  },
+  {
+    "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-app/providers/Microsoft.Web/sites/app-portal/slots/staging",
+    "kind": "app,linux",
+    "location": "westeurope",
+    "name": "app-portal/staging",
+    "resourceGroup": "rg-app",
+    "tags": null,
+    "type": "Microsoft.Web/sites/slots"
   }
 ]

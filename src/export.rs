@@ -209,7 +209,7 @@ pub fn to_svg(topology: &Topology, theme: &Theme) -> String {
         );
         let tx = cx + chip + 12.0;
         let mid = r.y + r.h / 2.0;
-        if let Some(group) = &node.group {
+        if let Some(subtext) = node.card_subtext() {
             let _ = write!(
                 svg,
                 r#"<text x="{tx:.1}" y="{:.1}" font-size="12.5" font-weight="600" fill="{}">{}</text>"#,
@@ -229,7 +229,7 @@ pub fn to_svg(topology: &Topology, theme: &Theme) -> String {
                 r#"<text x="{tx:.1}" y="{:.1}" font-size="10.5" fill="{}" fill-opacity="0.78">{}</text>"#,
                 mid + 17.0,
                 theme.ink_3.hex(),
-                escape(&truncate(group, 26))
+                escape(&truncate(&subtext, 30))
             );
         } else {
             let _ = write!(

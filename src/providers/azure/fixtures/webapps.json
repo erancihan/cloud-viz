@@ -1,0 +1,14 @@
+[
+  {
+    "appServicePlanId": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-app/providers/Microsoft.Web/serverFarms/plan-portal",
+    "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-app/providers/Microsoft.Web/sites/app-portal",
+    "name": "app-portal",
+    "state": "Running"
+  },
+  {
+    "appServicePlanId": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-ghost/providers/Microsoft.Web/serverFarms/plan-missing",
+    "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-ghost/providers/Microsoft.Web/sites/app-ghost",
+    "name": "app-ghost",
+    "state": "Running"
+  }
+]

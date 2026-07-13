@@ -42,11 +42,16 @@ cargo run -- --export-svg topo.svg --provider azure      # your live estate
   cache age and **⟳ Refresh** always fetches live.
 - Normalizes it into a provider-agnostic topology graph.
 - Lays out resources by dependency: a compound spring embedder clusters
-  connected resources together, nests vnet ▸ subnet ▸ members, and shows the
-  resource group as card subtext instead of a container box (the subscription
-  is already in the toolbar). Relationship edges (VM → NIC, VM → managed
-  disk via ARM's `managedBy`, NIC → public IP, NSG → subnet/NIC, app → plan,
-  …) route as relaxed bezier curves.
+  connected resources together and nests what belongs together — VMs render
+  inside the subnet their NIC lives in (vnet ▸ subnet ▸ VMs), App Services
+  inside their App Service plan. The resource group shows as card subtext
+  instead of a container box (the subscription is already in the toolbar).
+- Folds subsidiary resources into their owner's card instead of drawing
+  them as nodes: attached managed disks (via ARM's `managedBy`), NICs, VM
+  extensions, and deployment slots appear as a card summary
+  ("rg-app · 1 disk · 1 nic") and a full list in the details panel.
+  Remaining relationships (VM → public IP, NSG → subnet/VM, LB → IP, …)
+  route as relaxed bezier curves.
 - Pan (drag), zoom (scroll, cursor-anchored), fit-to-view, clickable minimap,
   light/dark themes, fullscreen (F11), details panel per resource.
 - Degrades gracefully: CLI missing → install guidance; signed out →
@@ -115,14 +120,16 @@ The provider then shows up in the toolbar dropdown automatically.
 ## Azure commands used
 
 `az account show` · `az account list` · `az group list` ·
-`az resource list` · `az network vnet list` · `az network nic list`
-(all with `--output json --only-show-errors`; the last two are best-effort
+`az resource list` · `az network vnet list` · `az network nic list` ·
+`az webapp list`
+(all with `--output json --only-show-errors`; the last three are best-effort
 enrichment and only produce warnings when they fail).
 
-Associations are read from fields already present in those responses — no
-extra calls: `managedBy` on `az resource list` (an attached managed disk
-points at its VM), `networkSecurityGroup` on subnets and NICs, and the NIC's
-`virtualMachine` / `subnet` / `publicIPAddress` references.
+Associations come from fields in those responses: `managedBy` on
+`az resource list` (an attached managed disk points at its VM),
+`networkSecurityGroup` on subnets and NICs, the NIC's `virtualMachine` /
+`subnet` / `publicIPAddress` references, `appServicePlanId` on
+`az webapp list`, and child-resource ids (VM extensions, site slots).
 
 ## Roadmap
 

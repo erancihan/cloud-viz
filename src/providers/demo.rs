@@ -125,56 +125,31 @@ pub fn demo_topology() -> Topology {
         });
     }
 
-    // Network members live inside their subnet.
-    let member = |snet: &str,
-                  name: &'static str,
-                  kind: &'static str,
-                  kind_label: &'static str,
-                  metadata: Vec<(&'static str, &'static str)>|
-     -> Def {
-        Def {
-            id: id("rg-network", name),
-            name,
-            kind,
-            kind_label,
-            category: Network,
-            parent: Some(snet.to_string()),
-            container: false,
-            group: Some("rg-network"),
-            metadata,
-        }
-    };
-
+    // Subnet members: VMs render inside the subnet their NIC lives in (the
+    // NIC itself rides on the VM's card, mirroring the Azure mapper), and
+    // AKS sits in its delegated subnet.
     defs.extend([
-        member(
-            &snet_web,
-            "nsg-web",
-            "Microsoft.Network/networkSecurityGroups",
-            "Network security group",
-            vec![],
-        ),
         Def {
-            // NICs belong to rg-app but sit inside the web subnet.
-            id: id("rg-app", "nic-web-01"),
-            name: "nic-web-01",
-            kind: "Microsoft.Network/networkInterfaces",
-            kind_label: "Network interface",
-            category: Network,
+            id: id("rg-app", "vm-web-01"),
+            name: "vm-web-01",
+            kind: "Microsoft.Compute/virtualMachines",
+            kind_label: "Virtual machine",
+            category: Compute,
             parent: Some(snet_web.clone()),
             container: false,
             group: Some("rg-app"),
-            metadata: vec![("privateIp", "10.0.0.4")],
+            metadata: vec![("size", "Standard_D2s_v5"), ("os", "Ubuntu 24.04")],
         },
         Def {
-            id: id("rg-app", "nic-web-02"),
-            name: "nic-web-02",
-            kind: "Microsoft.Network/networkInterfaces",
-            kind_label: "Network interface",
-            category: Network,
+            id: id("rg-app", "vm-web-02"),
+            name: "vm-web-02",
+            kind: "Microsoft.Compute/virtualMachines",
+            kind_label: "Virtual machine",
+            category: Compute,
             parent: Some(snet_web.clone()),
             container: false,
             group: Some("rg-app"),
-            metadata: vec![("privateIp", "10.0.0.5")],
+            metadata: vec![("size", "Standard_D2s_v5"), ("os", "Ubuntu 24.04")],
         },
         Def {
             id: id("rg-app", "aks-main"),
@@ -186,6 +161,34 @@ pub fn demo_topology() -> Topology {
             container: false,
             group: Some("rg-app"),
             metadata: vec![("nodeCount", "3"), ("version", "1.31")],
+        },
+    ]);
+
+    // App Service plan hosts its App Service, like the Azure mapper builds
+    // from `az webapp list`.
+    let plan = id("rg-app", "plan-portal");
+    defs.extend([
+        Def {
+            id: plan.clone(),
+            name: "plan-portal",
+            kind: "Microsoft.Web/serverfarms",
+            kind_label: "App Service plan",
+            category: Web,
+            parent: None,
+            container: true,
+            group: Some("rg-app"),
+            metadata: vec![("sku", "P1v3")],
+        },
+        Def {
+            id: id("rg-app", "app-portal"),
+            name: "app-portal",
+            kind: "Microsoft.Web/sites",
+            kind_label: "App Service",
+            category: Web,
+            parent: Some(plan.clone()),
+            container: false,
+            group: Some("rg-app"),
+            metadata: vec![("host", "app-portal.azurewebsites.net")],
         },
     ]);
 
@@ -208,44 +211,12 @@ pub fn demo_topology() -> Topology {
             vec![],
         ),
         leaf(
-            "rg-app",
-            "vm-web-01",
-            "Microsoft.Compute/virtualMachines",
-            "Virtual machine",
-            Compute,
-            vec![("size", "Standard_D2s_v5"), ("os", "Ubuntu 24.04")],
-        ),
-        leaf(
-            "rg-app",
-            "vm-web-02",
-            "Microsoft.Compute/virtualMachines",
-            "Virtual machine",
-            Compute,
-            vec![("size", "Standard_D2s_v5"), ("os", "Ubuntu 24.04")],
-        ),
-        leaf(
-            "rg-app",
-            "disk-web-01-data",
-            "Microsoft.Compute/disks",
-            "Managed disk",
-            Compute,
-            vec![("sizeGb", "256"), ("sku", "Premium_LRS")],
-        ),
-        leaf(
-            "rg-app",
-            "plan-portal",
-            "Microsoft.Web/serverfarms",
-            "App Service plan",
-            Web,
-            vec![("sku", "P1v3")],
-        ),
-        leaf(
-            "rg-app",
-            "app-portal",
-            "Microsoft.Web/sites",
-            "App Service",
-            Web,
-            vec![("host", "app-portal.azurewebsites.net")],
+            "rg-network",
+            "nsg-web",
+            "Microsoft.Network/networkSecurityGroups",
+            "Network security group",
+            Network,
+            vec![],
         ),
         leaf(
             "rg-app",
@@ -329,7 +300,7 @@ pub fn demo_topology() -> Topology {
         ),
     ]);
 
-    let nodes: Vec<TopologyNode> = defs
+    let mut nodes: Vec<TopologyNode> = defs
         .into_iter()
         .map(|d| TopologyNode {
             id: d.id,
@@ -340,6 +311,7 @@ pub fn demo_topology() -> Topology {
             parent_id: d.parent,
             container: d.container,
             group: d.group.map(str::to_string),
+            attachments: Vec::new(),
             region: Some("westeurope".into()),
             metadata: d
                 .metadata
@@ -349,38 +321,41 @@ pub fn demo_topology() -> Topology {
         })
         .collect();
 
-    // Only dependency edges remain; subnet membership is shown by containment.
+    // Folded-in subsidiaries, as the Azure mapper produces them: disks,
+    // extensions, and NICs ride on their VM's card; slots on their site's.
+    let mut attach = |name: &str, items: &[(&str, &str)]| {
+        if let Some(node) = nodes.iter_mut().find(|n| n.name == name) {
+            node.attachments = items
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect();
+        }
+    };
+    attach(
+        "vm-web-01",
+        &[
+            ("disk", "disk-web-01-data"),
+            ("extension", "AADSSHLoginForLinux"),
+            ("nic", "nic-web-01"),
+        ],
+    );
+    attach("vm-web-02", &[("nic", "nic-web-02")]);
+    attach("app-portal", &[("slot", "staging")]);
+
+    // Only dependency edges remain; subnet, vnet, and plan membership is
+    // shown by containment, and NICs/disks/extensions/slots by attachments.
     let edge_defs: Vec<(String, String, EdgeKind, &str)> = vec![
         (
-            id("rg-app", "vm-web-01"),
-            id("rg-app", "nic-web-01"),
-            EdgeKind::Association,
-            "attached",
-        ),
-        (
-            id("rg-app", "vm-web-02"),
-            id("rg-app", "nic-web-02"),
-            EdgeKind::Association,
-            "attached",
-        ),
-        // Mirrors Azure's managedBy: a data disk attached to its VM.
-        (
-            id("rg-app", "vm-web-01"),
-            id("rg-app", "disk-web-01-data"),
-            EdgeKind::Association,
-            "attached",
+            id("rg-network", "nsg-web"),
+            snet_web.clone(),
+            EdgeKind::Network,
+            "protects",
         ),
         (
             id("rg-network", "lb-web"),
             id("rg-network", "pip-gateway"),
             EdgeKind::Association,
             "frontend",
-        ),
-        (
-            id("rg-app", "app-portal"),
-            id("rg-app", "plan-portal"),
-            EdgeKind::Association,
-            "hosted on",
         ),
         (
             id("rg-app", "aks-main"),
@@ -452,15 +427,12 @@ mod tests {
                 "missing target {}",
                 e.target
             );
+            // Edges may target containers (NSG -> subnet), but never start
+            // from one.
             assert!(
                 !containers.contains(e.source.as_str()),
                 "edge from container {}",
                 e.source
-            );
-            assert!(
-                !containers.contains(e.target.as_str()),
-                "edge into container {}",
-                e.target
             );
         }
     }
@@ -481,21 +453,40 @@ mod tests {
     }
 
     #[test]
-    fn network_members_nest_under_their_subnet() {
+    fn vms_nest_under_their_subnet_with_folded_attachments() {
         let t = demo_topology();
         let by_name = |name: &str| t.nodes.iter().find(|n| n.name == name).unwrap();
         let snet_web = by_name("snet-web");
         assert!(snet_web.container);
-        for nic in ["nic-web-01", "nic-web-02", "nsg-web"] {
-            assert_eq!(
-                by_name(nic).parent_id.as_deref(),
-                Some(snet_web.id.as_str())
-            );
+        for vm in ["vm-web-01", "vm-web-02"] {
+            assert_eq!(by_name(vm).parent_id.as_deref(), Some(snet_web.id.as_str()));
         }
+        // NIC/disk/extension ride on the VM card, not as nodes.
+        assert!(!t.nodes.iter().any(|n| n.name.starts_with("nic-web")));
+        assert_eq!(
+            by_name("vm-web-01").card_subtext().as_deref(),
+            Some("rg-app · 1 disk · 1 extension · 1 nic")
+        );
         // subnets nest inside the vnet
         let vnet = by_name("vnet-hub");
         assert!(vnet.container);
         assert_eq!(snet_web.parent_id.as_deref(), Some(vnet.id.as_str()));
+    }
+
+    #[test]
+    fn app_service_nests_in_its_plan() {
+        let t = demo_topology();
+        let by_name = |name: &str| t.nodes.iter().find(|n| n.name == name).unwrap();
+        let plan = by_name("plan-portal");
+        assert!(plan.container);
+        assert_eq!(
+            by_name("app-portal").parent_id.as_deref(),
+            Some(plan.id.as_str())
+        );
+        assert_eq!(
+            by_name("app-portal").attachments,
+            vec![("slot".to_string(), "staging".to_string())]
+        );
     }
 
     #[test]
