@@ -107,6 +107,49 @@ pub struct AzWebApp {
     pub app_service_plan_id: Option<String>,
 }
 
+/// One entry of `az vm list` — only the SSH key material is read, to match
+/// VMs to `Microsoft.Compute/sshPublicKeys` resources (ARM copies the key
+/// text into the VM's osProfile instead of referencing the key resource).
+#[derive(Debug, Clone, Deserialize)]
+pub struct AzVm {
+    pub id: String,
+    #[serde(default, rename = "osProfile")]
+    pub os_profile: Option<AzOsProfile>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct AzOsProfile {
+    #[serde(default, rename = "linuxConfiguration")]
+    pub linux_configuration: Option<AzLinuxConfiguration>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct AzLinuxConfiguration {
+    #[serde(default)]
+    pub ssh: Option<AzSshConfig>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct AzSshConfig {
+    #[serde(default, rename = "publicKeys")]
+    pub public_keys: Vec<AzSshPublicKeyRef>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct AzSshPublicKeyRef {
+    #[serde(default, rename = "keyData")]
+    pub key_data: Option<String>,
+}
+
+/// One entry of `az sshkey list` (Microsoft.Compute/sshPublicKeys).
+#[derive(Debug, Clone, Deserialize)]
+pub struct AzSshKey {
+    pub id: String,
+    pub name: String,
+    #[serde(default, rename = "publicKey")]
+    pub public_key: Option<String>,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct AzIdRef {
     #[serde(default)]

@@ -18,7 +18,8 @@ pub const LEAF_W: f32 = 240.0;
 /// Height of a card's head (name / kind / group lines). Cards with
 /// attachments grow below this by one `ATTACH_ROW` per visible row.
 pub const LEAF_H: f32 = 76.0;
-pub const ATTACH_ROW: f32 = 21.0;
+/// Pitch of one attachment sub-card (card height + gap).
+pub const ATTACH_ROW: f32 = 26.0;
 pub const ATTACH_PAD: f32 = 7.0;
 /// Cap on attachment rows painted on a card; extras collapse into a final
 /// "+N more" row so a disk-heavy VM can't dwarf the diagram.

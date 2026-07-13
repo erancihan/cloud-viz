@@ -223,6 +223,13 @@ pub fn draw_attachment(painter: &Painter, rect: Rect, kind: &str, color: Color32
                 (2.8, 13.2),
             ]));
         }
+        // Key: ring head, shaft, two teeth.
+        "ssh key" => {
+            painter.add(Shape::circle_stroke(p(4.8, 8.0), 2.4 * s, stroke));
+            painter.add(line(&[(7.2, 8.0), (13.4, 8.0)]));
+            painter.add(line(&[(10.8, 8.0), (10.8, 10.6)]));
+            painter.add(line(&[(13.4, 8.0), (13.4, 10.6)]));
+        }
         // Two stacked layers for deployment slots.
         "slot" => {
             painter.add(closed(&[
@@ -244,6 +251,18 @@ pub fn draw_attachment(painter: &Painter, rect: Rect, kind: &str, color: Color32
             }
         }
     }
+}
+
+/// Link badge for shared attachments (an SSH key used by several VMs): two
+/// rings joined by a bar. Mirrored by `export.rs::link_glyph_svg`.
+pub fn draw_link(painter: &Painter, rect: Rect, color: Color32) {
+    let s = rect.width() / 16.0;
+    let o = rect.min;
+    let p = |x: f32, y: f32| Pos2::new(o.x + x * s, o.y + y * s);
+    let stroke = Stroke::new((1.6 * s).max(1.0), color);
+    painter.add(Shape::circle_stroke(p(5.0, 11.0), 2.6 * s, stroke));
+    painter.add(Shape::circle_stroke(p(11.0, 5.0), 2.6 * s, stroke));
+    painter.add(Shape::line(vec![p(6.8, 9.2), p(9.2, 6.8)], stroke));
 }
 
 /// Elliptical arc approximated by a polyline (egui has no arc primitive).

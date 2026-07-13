@@ -249,8 +249,8 @@ pub fn to_svg(topology: &Topology, theme: &Theme) -> String {
             );
         }
 
-        // Attachment rows below the head: mini icon + name each, with a
-        // "+N more" overflow row (mirrors ui/canvas.rs).
+        // Attachment sub-cards below the head, with a "+N more" overflow row
+        // and a link badge on shared attachments (mirrors ui/canvas.rs).
         if !node.attachments.is_empty() {
             let _ = write!(
                 svg,
@@ -264,36 +264,58 @@ pub fn to_svg(topology: &Topology, theme: &Theme) -> String {
             let rows = attachment_rows(node.attachments.len());
             let overflow = node.attachments.len() > rows;
             for i in 0..rows {
-                let cy = r.y + LEAF_H + ATTACH_PAD + (i as f32 + 0.5) * ATTACH_ROW;
+                let top = r.y + LEAF_H + ATTACH_PAD + i as f32 * ATTACH_ROW;
+                let cy = top + (ATTACH_ROW - 4.0) / 2.0;
                 if overflow && i == rows - 1 {
                     let hidden = node.attachments.len() - (rows - 1);
                     let _ = write!(
                         svg,
                         r#"<text x="{:.1}" y="{:.1}" font-size="10.5" fill="{}">+{hidden} more</text>"#,
-                        r.x + 38.0,
+                        r.x + 20.0,
                         cy + 3.5,
                         theme.ink_3.hex()
                     );
                     break;
                 }
-                let (kind, name) = &node.attachments[i];
-                // 16-grid glyph scaled to 11px, centered on (x=27, cy).
+                let att = &node.attachments[i];
+                let (sub_x, sub_right) = (r.x + 14.0, r.right() - 10.0);
+                let _ = write!(
+                    svg,
+                    r#"<rect x="{:.1}" y="{:.1}" width="{:.1}" height="{:.1}" rx="5" fill="{}" stroke="{}" stroke-width="1"/>"#,
+                    sub_x,
+                    top,
+                    sub_right - sub_x,
+                    ATTACH_ROW - 4.0,
+                    theme.plane.hex(),
+                    theme.hairline.hex()
+                );
+                // 16-grid glyph scaled to 11px, centered on (sub_x+13, cy).
                 let _ = write!(
                     svg,
                     r#"<g transform="translate({:.1},{:.1}) scale(0.6875)" stroke="{}" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round">{}</g>"#,
-                    r.x + 27.0 - 5.5,
+                    sub_x + 13.0 - 5.5,
                     cy - 5.5,
                     theme.ink_3.hex(),
-                    attachment_glyph_svg(kind, theme.ink_3)
+                    attachment_glyph_svg(&att.kind, theme.ink_3)
                 );
                 let _ = write!(
                     svg,
                     r#"<text x="{:.1}" y="{:.1}" font-size="10.5" fill="{}">{}</text>"#,
-                    r.x + 38.0,
+                    sub_x + 24.0,
                     cy + 3.5,
                     theme.ink_2.hex(),
-                    escape(&truncate(name, 24))
+                    escape(&truncate(&att.name, if att.shared { 20 } else { 24 }))
                 );
+                if att.shared {
+                    let _ = write!(
+                        svg,
+                        r#"<g transform="translate({:.1},{:.1}) scale(0.5625)" stroke="{}" stroke-width="1.6" fill="none" stroke-linecap="round">{}</g>"#,
+                        sub_right - 9.0 - 4.5,
+                        top + 7.0 - 4.5,
+                        theme.accent.hex(),
+                        link_glyph_svg()
+                    );
+                }
             }
         }
     }
@@ -347,6 +369,11 @@ fn attachment_glyph_svg(kind: &str, color: Rgb) -> String {
         "extension" => {
             r#"<path d="M2.8 7h3.4V5.4l.9-1h1.8l.9 1V7h3.4v6.2H2.8Z"/>"#.to_string()
         }
+        "ssh key" => concat!(
+            r#"<circle cx="4.8" cy="8" r="2.4"/>"#,
+            r#"<path d="M7.2 8h6.2M10.8 8v2.6M13.4 8v2.6"/>"#
+        )
+        .to_string(),
         "slot" => concat!(
             r#"<rect x="3" y="3" width="7.4" height="7.4" rx="1"/>"#,
             r#"<rect x="5.6" y="5.6" width="7.4" height="7.4" rx="1"/>"#
@@ -357,6 +384,11 @@ fn attachment_glyph_svg(kind: &str, color: Rgb) -> String {
             color.hex()
         ),
     }
+}
+
+/// Link badge for shared attachments (mirrors `glyphs::draw_link`).
+fn link_glyph_svg() -> &'static str {
+    r#"<circle cx="5" cy="11" r="2.6"/><circle cx="11" cy="5" r="2.6"/><path d="M6.8 9.2l2.4-2.4"/>"#
 }
 
 /// 16x16 line glyphs, one per category (mirrors the in-app painter glyphs).

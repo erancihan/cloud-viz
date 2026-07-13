@@ -1,0 +1,36 @@
+[
+  {
+    "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/RG-APP/providers/Microsoft.Compute/virtualMachines/vm-web-01",
+    "name": "vm-web-01",
+    "osProfile": {
+      "adminUsername": "azureuser",
+      "linuxConfiguration": {
+        "ssh": {
+          "publicKeys": [
+            {
+              "keyData": "ssh-rsa AAAAB3NzaC1yc2EAAADAQABAAABgQCadmin generated-by-azure",
+              "path": "/home/azureuser/.ssh/authorized_keys"
+            }
+          ]
+        }
+      }
+    }
+  },
+  {
+    "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-app/providers/Microsoft.Compute/virtualMachines/vm-web-02",
+    "name": "vm-web-02",
+    "osProfile": {
+      "adminUsername": "azureuser",
+      "linuxConfiguration": {
+        "ssh": {
+          "publicKeys": [
+            {
+              "keyData": "ssh-rsa AAAAB3NzaC1yc2EAAADAQABAAABgQCadmin generated-by-azure\n",
+              "path": "/home/azureuser/.ssh/authorized_keys"
+            }
+          ]
+        }
+      }
+    }
+  }
+]

@@ -2,7 +2,7 @@
 //! model. No I/O here — everything is unit-testable with fixtures.
 
 use super::az_types::*;
-use crate::model::{EdgeKind, ResourceCategory, Topology, TopologyEdge, TopologyNode};
+use crate::model::{Attachment, EdgeKind, ResourceCategory, Topology, TopologyEdge, TopologyNode};
 use std::collections::{HashMap, HashSet};
 
 pub struct AzureInventory {
@@ -12,6 +12,8 @@ pub struct AzureInventory {
     pub vnets: Vec<AzVnet>,
     pub nics: Vec<AzNic>,
     pub webapps: Vec<AzWebApp>,
+    pub vms: Vec<AzVm>,
+    pub sshkeys: Vec<AzSshKey>,
     pub warnings: Vec<String>,
 }
 
@@ -22,6 +24,8 @@ const VNET_TYPE: &str = "microsoft.network/virtualnetworks";
 pub fn categorize(resource_type: &str) -> ResourceCategory {
     use ResourceCategory::*;
     const TABLE: &[(&str, ResourceCategory)] = &[
+        // Specific types first — the table matches by prefix, in order.
+        ("microsoft.compute/sshpublickeys", Security),
         ("microsoft.compute", Compute),
         ("microsoft.classiccompute", Compute),
         ("microsoft.network", Network),
@@ -64,6 +68,7 @@ pub fn type_label(resource_type: &str) -> String {
         ("microsoft.compute/virtualmachines", "Virtual machine"),
         ("microsoft.compute/virtualmachinescalesets", "VM scale set"),
         ("microsoft.compute/disks", "Managed disk"),
+        ("microsoft.compute/sshpublickeys", "SSH public key"),
         ("microsoft.compute/snapshots", "Snapshot"),
         ("microsoft.compute/images", "Image"),
         ("microsoft.network/virtualnetworks", "Virtual network"),
@@ -202,7 +207,7 @@ pub fn build_topology(inv: AzureInventory) -> Topology {
     // App Service deployment slots). Collected first so the node loop can
     // skip them; applied once every owner exists.
     let resource_ids: HashSet<String> = inv.resources.iter().map(|r| norm(&r.id)).collect();
-    let mut folded: HashMap<String, Vec<(String, String)>> = HashMap::new();
+    let mut folded: HashMap<String, Vec<Attachment>> = HashMap::new();
     let mut fold_away: HashSet<String> = HashSet::new();
     for resource in &inv.resources {
         let ty = resource.resource_type.to_lowercase();
@@ -235,12 +240,62 @@ pub fn build_topology(inv: AzureInventory) -> Topology {
         };
         if resource_ids.contains(&owner) {
             let name = resource.name.rsplit('/').next().unwrap_or(&resource.name);
-            folded
-                .entry(owner)
-                .or_default()
-                .push((kind.to_string(), name.to_string()));
+            folded.entry(owner).or_default().push(Attachment {
+                kind: kind.to_string(),
+                name: name.to_string(),
+                shared: false,
+            });
             fold_away.insert(id);
         }
+    }
+
+    // SSH public keys: ARM copies the key material into the VM's osProfile
+    // instead of referencing the sshPublicKeys resource, so match `az sshkey
+    // list` key text against `az vm list` osProfile keys. A key in use folds
+    // into every VM using it (marked shared when that's more than one);
+    // only unattached keys remain standalone cards.
+    let key_by_material: HashMap<&str, &AzSshKey> = inv
+        .sshkeys
+        .iter()
+        .filter_map(|k| k.public_key.as_deref().map(|m| (m.trim(), k)))
+        .collect();
+    let mut ssh_users: HashMap<String, Vec<String>> = HashMap::new(); // key id -> VM ids
+    for vm in &inv.vms {
+        let vm_id = norm(&vm.id);
+        if !resource_ids.contains(&vm_id) {
+            continue;
+        }
+        let keys = vm
+            .os_profile
+            .iter()
+            .filter_map(|p| p.linux_configuration.as_ref())
+            .filter_map(|l| l.ssh.as_ref())
+            .flat_map(|s| &s.public_keys);
+        for key in keys {
+            let Some(material) = key.key_data.as_deref().map(str::trim) else {
+                continue;
+            };
+            if let Some(ssh_key) = key_by_material.get(material) {
+                let users = ssh_users.entry(norm(&ssh_key.id)).or_default();
+                if !users.contains(&vm_id) {
+                    users.push(vm_id.clone());
+                }
+            }
+        }
+    }
+    for ssh_key in &inv.sshkeys {
+        let key_id = norm(&ssh_key.id);
+        let Some(users) = ssh_users.get(&key_id) else {
+            continue; // unattached key: keep it visible as its own node
+        };
+        for vm_id in users {
+            folded.entry(vm_id.clone()).or_default().push(Attachment {
+                kind: "ssh key".into(),
+                name: ssh_key.name.clone(),
+                shared: users.len() > 1,
+            });
+        }
+        fold_away.insert(key_id);
     }
 
     // Flat resource inventory. Every resource is top-level — the layout places
@@ -512,6 +567,8 @@ mod tests {
             vnets: serde_json::from_str(include_str!("fixtures/vnets.json")).unwrap(),
             nics: serde_json::from_str(include_str!("fixtures/nics.json")).unwrap(),
             webapps: serde_json::from_str(include_str!("fixtures/webapps.json")).unwrap(),
+            vms: serde_json::from_str(include_str!("fixtures/vms.json")).unwrap(),
+            sshkeys: serde_json::from_str(include_str!("fixtures/sshkeys.json")).unwrap(),
             warnings: Vec::new(),
         })
     }
@@ -624,17 +681,47 @@ mod tests {
             .any(|n| n.name.contains("AADSSHLoginForLinux")));
 
         let vm = find(&t, "vm-web-01");
+        let short: Vec<(&str, &str)> = vm
+            .attachments
+            .iter()
+            .map(|a| (a.kind.as_str(), a.name.as_str()))
+            .collect();
         assert_eq!(
-            vm.attachments,
+            short,
             vec![
-                ("disk".to_string(), "DataDisk_1".to_string()),
-                ("extension".to_string(), "AADSSHLoginForLinux".to_string()),
-                ("nic".to_string(), "nic-web-01".to_string()),
+                ("disk", "DataDisk_1"),
+                ("extension", "AADSSHLoginForLinux"),
+                ("nic", "nic-web-01"),
+                ("ssh key", "key-admin"),
             ]
         );
         // An unattached disk stays visible as its own node.
         let orphan = find(&t, "disk-orphan");
         assert!(orphan.attachments.is_empty());
+    }
+
+    #[test]
+    fn ssh_keys_fold_into_vms_by_key_material() {
+        let t = build();
+        // key-admin's material matches both VMs' osProfile keys (one carries
+        // a trailing newline — matching trims whitespace), so it folds into
+        // both, flagged shared, with no standalone card.
+        assert!(!t.nodes.iter().any(|n| n.name == "key-admin"));
+        for vm_name in ["vm-web-01", "vm-web-02"] {
+            let vm = find(&t, vm_name);
+            let key = vm
+                .attachments
+                .iter()
+                .find(|a| a.kind == "ssh key")
+                .unwrap_or_else(|| panic!("{vm_name} missing ssh key attachment"));
+            assert_eq!(key.name, "key-admin");
+            assert!(key.shared, "{vm_name}'s key should be flagged shared");
+        }
+
+        // A key no VM uses stays a standalone card, categorized as Security.
+        let orphan = find(&t, "key-orphan");
+        assert_eq!(orphan.category, ResourceCategory::Security);
+        assert_eq!(orphan.kind_label, "SSH public key");
     }
 
     #[test]
@@ -648,7 +735,11 @@ mod tests {
         assert!(!t.nodes.iter().any(|n| n.name == "app-portal/staging"));
         assert_eq!(
             app.attachments,
-            vec![("slot".to_string(), "staging".to_string())]
+            vec![Attachment {
+                kind: "slot".into(),
+                name: "staging".into(),
+                shared: false,
+            }]
         );
         // A webapp whose site/plan never appeared in the listings is skipped.
         assert!(!t.nodes.iter().any(|n| n.name == "app-ghost"));
