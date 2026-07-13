@@ -207,11 +207,53 @@ pub fn build_topology(inv: AzureInventory) -> Topology {
     // App Service deployment slots). Collected first so the node loop can
     // skip them; applied once every owner exists.
     let resource_ids: HashSet<String> = inv.resources.iter().map(|r| norm(&r.id)).collect();
+
+    // Public IPs referenced by a NIC fold into the NIC's anchor — the VM
+    // when the NIC has one, otherwise the NIC itself. Unreferenced public
+    // IPs keep their own card.
+    let mut pip_anchors: HashMap<String, Vec<String>> = HashMap::new();
+    for nic in &inv.nics {
+        let nic_id = norm(&nic.id);
+        let anchor = match nic_vm.get(&nic_id) {
+            Some(vm) if resource_ids.contains(vm) => vm.clone(),
+            _ => nic_id.clone(),
+        };
+        if !resource_ids.contains(&anchor) {
+            continue;
+        }
+        for ip_config in &nic.ip_configurations {
+            if let Some(pip) = ip_config
+                .public_ip_address
+                .as_ref()
+                .and_then(|p| p.id.as_deref())
+            {
+                let anchors = pip_anchors.entry(norm(pip)).or_default();
+                if !anchors.contains(&anchor) {
+                    anchors.push(anchor.clone());
+                }
+            }
+        }
+    }
+
     let mut folded: HashMap<String, Vec<Attachment>> = HashMap::new();
     let mut fold_away: HashSet<String> = HashSet::new();
     for resource in &inv.resources {
         let ty = resource.resource_type.to_lowercase();
         let id = norm(&resource.id);
+        if ty == "microsoft.network/publicipaddresses" {
+            let Some(anchors) = pip_anchors.get(&id) else {
+                continue; // unattached public IP keeps its own card
+            };
+            for owner in anchors {
+                folded.entry(owner.clone()).or_default().push(Attachment {
+                    kind: "public ip".into(),
+                    name: resource.name.clone(),
+                    shared: anchors.len() > 1,
+                });
+            }
+            fold_away.insert(id);
+            continue;
+        }
         let (owner, kind) = if ty == "microsoft.compute/disks" {
             let Some(owner) = resource.managed_by.as_deref().filter(|m| !m.is_empty()) else {
                 continue; // unattached disk: keep it visible as its own node
@@ -420,12 +462,13 @@ pub fn build_topology(inv: AzureInventory) -> Topology {
     }
 
     // Hand each owner its folded-in subsidiaries, sorted for determinism
-    // with shared items last (they render below a separator on the card).
+    // with secondary items (SSH keys, public IPs) last — they render below
+    // a separator on the card.
     for (owner, mut items) in folded {
         if let Some(&i) = index.get(&owner) {
             items.sort_by(|a, b| {
-                a.shared
-                    .cmp(&b.shared)
+                a.secondary()
+                    .cmp(&b.secondary())
                     .then_with(|| a.kind.cmp(&b.kind))
                     .then_with(|| a.name.cmp(&b.name))
             });
@@ -511,8 +554,8 @@ pub fn build_topology(inv: AzureInventory) -> Topology {
                 &mut edges,
             );
         }
-        // Nest the anchor into the NIC's subnet (first one wins); public IPs
-        // become association edges.
+        // Nest the anchor into the NIC's subnet (first one wins). Public IPs
+        // were folded into the anchor's card during the pre-pass.
         for ip_config in &nic.ip_configurations {
             if nodes[anchor_index].parent_id.is_none() {
                 if let Some(subnet) = ip_config.subnet.as_ref().and_then(|s| s.id.as_deref()) {
@@ -521,19 +564,6 @@ pub fn build_topology(inv: AzureInventory) -> Topology {
                         nodes[anchor_index].parent_id = Some(subnet_id);
                     }
                 }
-            }
-            if let Some(pip) = ip_config
-                .public_ip_address
-                .as_ref()
-                .and_then(|p| p.id.as_deref())
-            {
-                add_edge(
-                    anchor_id.clone(),
-                    norm(pip),
-                    EdgeKind::Association,
-                    "public IP",
-                    &mut edges,
-                );
             }
         }
     }
@@ -657,22 +687,21 @@ mod tests {
         assert!(vm_parent.contains("subnets/snet-a"));
         assert!(!vm_parent.contains("snet-missing"));
 
-        // NIC-implied edges re-anchor on the VM.
-        let public_ip: Vec<&TopologyEdge> = t
-            .edges
+        // The NIC's public IP folds into the VM's card, not an edge or node.
+        assert!(!t.nodes.iter().any(|n| n.name == "pip-web"));
+        let vm = find(&t, "vm-web-01");
+        assert!(vm
+            .attachments
             .iter()
-            .filter(|e| e.label.as_deref() == Some("public IP"))
-            .collect();
-        assert_eq!(public_ip.len(), 1);
-        assert!(public_ip[0].source.contains("virtualmachines/vm-web-01"));
-        assert!(public_ip[0].target.contains("publicipaddresses/pip-web"));
+            .any(|a| a.kind == "public ip" && a.name == "pip-web" && !a.shared));
 
         // No leftover free-standing wiring edges.
-        assert!(!t
-            .edges
-            .iter()
-            .any(|e| e.label.as_deref() == Some("attached")
-                || e.label.as_deref() == Some("in subnet")));
+        assert!(!t.edges.iter().any(|e| {
+            matches!(
+                e.label.as_deref(),
+                Some("attached") | Some("in subnet") | Some("public IP")
+            )
+        }));
     }
 
     #[test]
@@ -692,12 +721,14 @@ mod tests {
             .iter()
             .map(|a| (a.kind.as_str(), a.name.as_str()))
             .collect();
+        // Hardware first, then the secondary group (public IP, SSH key).
         assert_eq!(
             short,
             vec![
                 ("disk", "DataDisk_1"),
                 ("extension", "AADSSHLoginForLinux"),
                 ("nic", "nic-web-01"),
+                ("public ip", "pip-web"),
                 ("ssh key", "key-admin"),
             ]
         );

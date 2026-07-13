@@ -5,7 +5,7 @@
 
 use crate::geom::{label_t, route_edge};
 use crate::layout::{
-    layout_topology, shared_split_index, Rect, ATTACH_PAD, ATTACH_ROW, ATTACH_SPLIT, LEAF_H,
+    layout_topology, secondary_split_index, Rect, ATTACH_PAD, ATTACH_ROW, ATTACH_SPLIT, LEAF_H,
 };
 use crate::model::{EdgeKind, ResourceCategory, Topology};
 use crate::theme::{mix, Rgb, Theme};
@@ -264,7 +264,7 @@ pub fn to_svg(topology: &Topology, theme: &Theme) -> String {
                 r.y + LEAF_H,
                 theme.hairline.hex()
             );
-            let split = shared_split_index(&node.attachments);
+            let split = secondary_split_index(&node.attachments);
             for (i, att) in node.attachments.iter().enumerate() {
                 let mut offset = LEAF_H + ATTACH_PAD + (i as f32 + 0.5) * ATTACH_ROW;
                 if let Some(s) = split {
@@ -286,14 +286,22 @@ pub fn to_svg(topology: &Topology, theme: &Theme) -> String {
                     }
                 }
                 let cy = r.y + offset;
+                // Secondary glyphs carry their category color (public IP =
+                // network green, SSH key = security red); hardware stays
+                // muted.
+                let icon_color = match att.kind.as_str() {
+                    "public ip" => theme.category_color(ResourceCategory::Network),
+                    "ssh key" => theme.category_color(ResourceCategory::Security),
+                    _ => theme.ink_3,
+                };
                 // 16-grid glyph scaled to 11px, centered on (x=27, cy).
                 let _ = write!(
                     svg,
                     r#"<g transform="translate({:.1},{:.1}) scale(0.6875)" stroke="{}" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round">{}</g>"#,
                     r.x + 27.0 - 5.5,
                     cy - 5.5,
-                    theme.ink_3.hex(),
-                    attachment_glyph_svg(&att.kind, theme.ink_3)
+                    icon_color.hex(),
+                    attachment_glyph_svg(&att.kind, icon_color)
                 );
                 let _ = write!(
                     svg,
@@ -366,6 +374,12 @@ fn attachment_glyph_svg(kind: &str, color: Rgb) -> String {
         "extension" => {
             r#"<path d="M2.8 7h3.4V5.4l.9-1h1.8l.9 1V7h3.4v6.2H2.8Z"/>"#.to_string()
         }
+        "public ip" => concat!(
+            r#"<circle cx="8" cy="8" r="5.4"/>"#,
+            r#"<ellipse cx="8" cy="8" rx="2.4" ry="5.4"/>"#,
+            r#"<path d="M2.6 8h10.8"/>"#
+        )
+        .to_string(),
         "ssh key" => concat!(
             r#"<circle cx="4.8" cy="8" r="2.4"/>"#,
             r#"<path d="M7.2 8h6.2M10.8 8v2.6M13.4 8v2.6"/>"#

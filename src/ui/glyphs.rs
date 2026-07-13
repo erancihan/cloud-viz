@@ -223,6 +223,17 @@ pub fn draw_attachment(painter: &Painter, rect: Rect, kind: &str, color: Color32
                 (2.8, 13.2),
             ]));
         }
+        // Globe for public IPs (internet reachability).
+        "public ip" => {
+            painter.add(Shape::circle_stroke(p(8.0, 8.0), 5.4 * s, stroke));
+            painter.add(Shape::Ellipse(EllipseShape {
+                center: p(8.0, 8.0),
+                radius: Vec2::new(2.4 * s, 5.4 * s),
+                fill: Color32::TRANSPARENT,
+                stroke,
+            }));
+            painter.add(line(&[(2.6, 8.0), (13.4, 8.0)]));
+        }
         // Key: ring head, shaft, two teeth.
         "ssh key" => {
             painter.add(Shape::circle_stroke(p(4.8, 8.0), 2.4 * s, stroke));

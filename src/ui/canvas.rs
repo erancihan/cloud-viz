@@ -451,12 +451,12 @@ fn draw_card(
         );
     }
 
-    // Attachment rows: a mini icon + name per folded-in subsidiary (disks,
-    // NICs, extensions, slots, SSH keys). Shared attachments (e.g. an SSH
-    // key used by several VMs) sit below their own separator and carry a
-    // link icon on the right.
+    // Attachment rows: a mini icon + name per folded-in subsidiary. The
+    // hardware rows (disks, NICs, extensions, slots) come first; secondary
+    // items (SSH keys, public IPs) sit below their own separator, with a
+    // link icon on the right when shared across nodes.
     if !node.attachments.is_empty() {
-        use crate::layout::{shared_split_index, ATTACH_PAD, ATTACH_ROW, ATTACH_SPLIT, LEAF_H};
+        use crate::layout::{secondary_split_index, ATTACH_PAD, ATTACH_ROW, ATTACH_SPLIT, LEAF_H};
         let divider_y = rect.min.y + LEAF_H * zoom;
         painter.line_segment(
             [
@@ -465,7 +465,7 @@ fn draw_card(
             ],
             Stroke::new(1.0, c32(theme.hairline)),
         );
-        let split = shared_split_index(&node.attachments);
+        let split = secondary_split_index(&node.attachments);
         for (i, att) in node.attachments.iter().enumerate() {
             let mut offset = LEAF_H + ATTACH_PAD + (i as f32 + 0.5) * ATTACH_ROW;
             if let Some(s) = split {
@@ -489,7 +489,14 @@ fn draw_card(
                 Pos2::new(rect.min.x + 27.0 * zoom, cy),
                 Vec2::splat(11.0 * zoom),
             );
-            glyphs::draw_attachment(painter, icon, &att.kind, c32(theme.ink_3));
+            // Secondary glyphs carry their category color (public IP =
+            // network green, SSH key = security red); hardware stays muted.
+            let icon_color = match att.kind.as_str() {
+                "public ip" => c32(theme.category_color(ResourceCategory::Network)),
+                "ssh key" => c32(theme.category_color(ResourceCategory::Security)),
+                _ => c32(theme.ink_3),
+            };
+            glyphs::draw_attachment(painter, icon, &att.kind, icon_color);
             let link_room = if att.shared { 26.0 * zoom } else { 10.0 * zoom };
             draw_truncated(
                 painter,
