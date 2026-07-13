@@ -43,6 +43,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
 
+    // Under WSLg, prefer the X11 (XWayland) backend. WSLg gives X11 windows a
+    // native Windows title bar and maximizes them correctly. The Wayland-native
+    // path instead makes winit draw its own client-side decorations, and WSLg
+    // fails to update that border/shadow when the window is maximized, leaving a
+    // stale outline painted over the canvas. winit picks Wayland whenever
+    // WAYLAND_DISPLAY is set, so hide it to fall back to X11 — but only when an
+    // X display is actually available, so we never strand the app with no
+    // usable backend.
+    if std::env::var_os("WSL_DISTRO_NAME").is_some()
+        && std::env::var_os("DISPLAY").is_some_and(|v| !v.is_empty())
+    {
+        std::env::remove_var("WAYLAND_DISPLAY");
+        std::env::remove_var("WAYLAND_SOCKET");
+    }
+
     let options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
             .with_title("CloudViz")
