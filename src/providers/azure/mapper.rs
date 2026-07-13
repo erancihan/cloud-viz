@@ -15,6 +15,7 @@ pub struct AzureInventory {
     pub vms: Vec<AzVm>,
     pub sshkeys: Vec<AzSshKey>,
     pub aks: Vec<AzAksCluster>,
+    pub restore_points: Vec<AzRestorePointCollection>,
     pub warnings: Vec<String>,
 }
 
@@ -241,6 +242,13 @@ pub fn build_topology(inv: AzureInventory) -> Topology {
         }
     }
 
+    // Restore point collection -> its source VM (from the per-RG listing).
+    let rpc_source: HashMap<String, String> = inv
+        .restore_points
+        .iter()
+        .filter_map(|rpc| Some((norm(&rpc.id), norm(rpc.source_vm()?))))
+        .collect();
+
     let mut folded: HashMap<String, Vec<Attachment>> = HashMap::new();
     let mut fold_away: HashSet<String> = HashSet::new();
     for resource in &inv.resources {
@@ -283,6 +291,13 @@ pub fn build_topology(inv: AzureInventory) -> Topology {
                 continue;
             };
             (id[..pos].to_string(), kind)
+        } else if ty == "microsoft.compute/restorepointcollections" {
+            // A VM backup: fold onto its source VM. If the source is unknown
+            // or gone, it stays a node and gathers into the detached box.
+            let Some(vm) = rpc_source.get(&id) else {
+                continue;
+            };
+            (vm.clone(), "restore point")
         } else {
             continue;
         };
@@ -651,6 +666,8 @@ mod tests {
             vms: serde_json::from_str(include_str!("fixtures/vms.json")).unwrap(),
             sshkeys: serde_json::from_str(include_str!("fixtures/sshkeys.json")).unwrap(),
             aks: serde_json::from_str(include_str!("fixtures/aks.json")).unwrap(),
+            restore_points: serde_json::from_str(include_str!("fixtures/restore-points.json"))
+                .unwrap(),
             warnings: Vec::new(),
         })
     }
@@ -767,7 +784,8 @@ mod tests {
             .iter()
             .map(|a| (a.kind.as_str(), a.name.as_str()))
             .collect();
-        // Hardware first, then the secondary group (public IP, SSH key).
+        // Hardware first, then the secondary group (public IP, restore point,
+        // SSH key), each alphabetical by kind.
         assert_eq!(
             short,
             vec![
@@ -775,6 +793,7 @@ mod tests {
                 ("extension", "AADSSHLoginForLinux"),
                 ("nic", "nic-web-01"),
                 ("public ip", "pip-web"),
+                ("restore point", "rpc-vm-web-01"),
                 ("ssh key", "key-admin"),
             ]
         );
@@ -858,26 +877,32 @@ mod tests {
     }
 
     #[test]
-    fn network_watchers_and_restore_points_gather_into_detached_boxes() {
+    fn network_watchers_gather_into_a_regional_box() {
         let t = build();
-        // Curated labels rather than the raw de-camel-cased type segment.
         let nw = find(&t, "NetworkWatcher_westeurope");
-        assert_eq!(nw.kind_label, "Network Watcher");
-        assert_eq!(nw.category, ResourceCategory::Network);
-        let rpc = find(&t, "rpc-vm-web-01");
-        assert_eq!(rpc.kind_label, "Restore point collection");
-        assert_eq!(rpc.category, ResourceCategory::Compute);
+        assert_eq!(nw.kind_label, "Network Watcher"); // curated, not de-camel-cased
+        let g = find(&t, "Network Watchers");
+        assert!(g.container);
+        assert_eq!(g.kind_label, "Regional"); // not "Detached"
+        assert_eq!(nw.parent_id.as_deref(), Some(g.id.as_str()));
+    }
 
-        // Both nest inside their respective detached container boxes.
-        for (group, member) in [
-            ("Network Watchers", "NetworkWatcher_westeurope"),
-            ("Restore point collections", "rpc-vm-web-01"),
-        ] {
-            let g = find(&t, group);
-            assert!(g.container, "{group} should be a container");
-            assert_eq!(g.kind_label, "Detached");
-            assert_eq!(find(&t, member).parent_id.as_deref(), Some(g.id.as_str()));
-        }
+    #[test]
+    fn restore_point_collections_fold_into_their_source_vm() {
+        let t = build();
+        // The source VM (from the per-RG listing) matches vm-web-01, so the
+        // collection folds onto its card instead of standing as a node.
+        assert!(!t.nodes.iter().any(|n| n.name == "rpc-vm-web-01"));
+        let vm = find(&t, "vm-web-01");
+        assert!(vm
+            .attachments
+            .iter()
+            .any(|a| a.kind == "restore point" && a.name == "rpc-vm-web-01"));
+        // No detached restore-point box, since the only one resolved.
+        assert!(!t
+            .nodes
+            .iter()
+            .any(|n| n.name == "Restore point collections"));
     }
 
     #[test]

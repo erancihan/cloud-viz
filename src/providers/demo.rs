@@ -367,14 +367,6 @@ pub fn demo_topology() -> Topology {
             vec![],
         ),
         leaf(
-            "rg-app",
-            "rpc-vm-web-01",
-            "Microsoft.Compute/restorePointCollections",
-            "Restore point collection",
-            Compute,
-            vec![],
-        ),
-        leaf(
             "rg-ops",
             "id-workload",
             "Microsoft.ManagedIdentity/userAssignedIdentities",
@@ -443,6 +435,7 @@ pub fn demo_topology() -> Topology {
             ("disk", "disk-web-01-data", false),
             ("extension", "AADSSHLoginForLinux", false),
             ("nic", "nic-web-01", false),
+            ("restore point", "rpc-vm-web-01", false),
             ("ssh key", "ssh-admin", true),
         ],
     );
@@ -564,9 +557,9 @@ mod tests {
         for vm in ["vm-web-01", "vm-web-02"] {
             assert_eq!(by_name(vm).parent_id.as_deref(), Some(snet_web.id.as_str()));
         }
-        // NIC/disk/extension/ssh key ride on the VM card, not as nodes.
+        // NIC/disk/extension/restore point/ssh key ride on the VM card.
         assert!(!t.nodes.iter().any(|n| n.name.starts_with("nic-web")));
-        assert_eq!(by_name("vm-web-01").attachments.len(), 4);
+        assert_eq!(by_name("vm-web-01").attachments.len(), 5);
         // The shared SSH key is flagged on both VMs and has no node; the
         // unused key keeps its standalone card.
         for vm in ["vm-web-01", "vm-web-02"] {
@@ -590,18 +583,22 @@ mod tests {
     fn detached_leftovers_gather_into_boxes() {
         let t = demo_topology();
         let by_name = |name: &str| t.nodes.iter().find(|n| n.name == name).unwrap();
-        for (group, member) in [
-            ("SSH public keys", "key-legacy"),
-            ("Managed disks", "disk-decom"),
-            ("Public IP addresses", "pip-reserved"),
-            ("Network Watchers", "nw-westeurope"),
-            ("Restore point collections", "rpc-vm-web-01"),
+        for (group, member, label) in [
+            ("SSH public keys", "key-legacy", "Detached"),
+            ("Managed disks", "disk-decom", "Detached"),
+            ("Public IP addresses", "pip-reserved", "Detached"),
+            ("Network Watchers", "nw-westeurope", "Regional"),
         ] {
             let g = by_name(group);
             assert!(g.container, "{group} should be a container");
-            assert_eq!(g.kind_label, "Detached");
+            assert_eq!(g.kind_label, label);
             assert_eq!(by_name(member).parent_id.as_deref(), Some(g.id.as_str()));
         }
+        // The restore point collection folds onto its VM instead.
+        assert!(by_name("vm-web-01")
+            .attachments
+            .iter()
+            .any(|a| a.kind == "restore point"));
     }
 
     #[test]

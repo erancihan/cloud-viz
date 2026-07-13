@@ -119,6 +119,34 @@ impl super::CloudProvider for AzureProvider {
         let aks: Vec<AzAksCluster> =
             self.try_list(&with_scope(&["aks", "list"], &scope_args), &mut warnings);
 
+        // Restore point collections expose their source VM only in the per-RG
+        // listing, so query just the resource groups that actually contain one
+        // (usually one or two) rather than the whole subscription.
+        let mut rpc_rgs: Vec<String> = resources
+            .iter()
+            .filter(|r| {
+                r.resource_type
+                    .eq_ignore_ascii_case("Microsoft.Compute/restorePointCollections")
+            })
+            .filter_map(|r| r.resource_group.clone())
+            .collect();
+        rpc_rgs.sort();
+        rpc_rgs.dedup();
+        let mut restore_points: Vec<AzRestorePointCollection> = Vec::new();
+        for rg in &rpc_rgs {
+            let base = [
+                "restore-point",
+                "collection",
+                "list",
+                "--resource-group",
+                rg,
+            ];
+            restore_points.extend(self.try_list::<AzRestorePointCollection>(
+                &with_scope(&base, &scope_args),
+                &mut warnings,
+            ));
+        }
+
         Ok(build_topology(AzureInventory {
             account,
             groups,
@@ -129,6 +157,7 @@ impl super::CloudProvider for AzureProvider {
             vms,
             sshkeys,
             aks,
+            restore_points,
             warnings,
         }))
     }

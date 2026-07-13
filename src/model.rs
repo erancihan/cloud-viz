@@ -112,7 +112,10 @@ impl Attachment {
     /// public IPs) — always render below their own separator on the card,
     /// after the hardware rows (disks, NICs, extensions, slots).
     pub fn secondary(&self) -> bool {
-        matches!(self.kind.as_str(), "ssh key" | "public ip")
+        matches!(
+            self.kind.as_str(),
+            "ssh key" | "public ip" | "restore point"
+        )
     }
 }
 
@@ -151,30 +154,41 @@ pub struct Topology {
 /// that are never topologically connected (network watchers, VM restore
 /// point collections).
 pub fn group_detached(topology: &mut Topology) {
-    const GROUPS: &[(&str, &str, ResourceCategory)] = &[
+    // (member kind_label, box name, category, box header label). "Detached"
+    // reads as orphaned/cleanup-candidate; regional services get "Regional".
+    const GROUPS: &[(&str, &str, ResourceCategory, &str)] = &[
         (
             "SSH public key",
             "SSH public keys",
             ResourceCategory::Security,
+            "Detached",
         ),
-        ("Managed disk", "Managed disks", ResourceCategory::Compute),
+        (
+            "Managed disk",
+            "Managed disks",
+            ResourceCategory::Compute,
+            "Detached",
+        ),
         (
             "Public IP address",
             "Public IP addresses",
             ResourceCategory::Network,
+            "Detached",
         ),
         (
             "Network Watcher",
             "Network Watchers",
             ResourceCategory::Network,
+            "Regional",
         ),
         (
             "Restore point collection",
             "Restore point collections",
             ResourceCategory::Compute,
+            "Detached",
         ),
     ];
-    for (kind_label, plural, category) in GROUPS {
+    for (kind_label, plural, category, box_label) in GROUPS {
         let members: Vec<usize> = topology
             .nodes
             .iter()
@@ -186,7 +200,7 @@ pub fn group_detached(topology: &mut Topology) {
             continue;
         }
         let id = format!(
-            "cloudviz:detached:{}",
+            "cloudviz:group:{}",
             kind_label.to_lowercase().replace(' ', "-")
         );
         for &i in &members {
@@ -196,7 +210,7 @@ pub fn group_detached(topology: &mut Topology) {
             id,
             name: (*plural).to_string(),
             kind: "cloudviz/detachedGroup".into(),
-            kind_label: "Detached".into(),
+            kind_label: (*box_label).to_string(),
             category: *category,
             parent_id: None,
             container: true,

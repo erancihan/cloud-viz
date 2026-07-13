@@ -150,6 +150,33 @@ pub struct AzSshKey {
     pub public_key: Option<String>,
 }
 
+/// One entry of `az restore-point collection list` — its `source.id` is the
+/// backed-up VM. az flattens `properties`, but we accept it nested too.
+#[derive(Debug, Clone, Deserialize)]
+pub struct AzRestorePointCollection {
+    pub id: String,
+    #[serde(default)]
+    pub source: Option<AzIdRef>,
+    #[serde(default)]
+    pub properties: Option<AzRpcProperties>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct AzRpcProperties {
+    #[serde(default)]
+    pub source: Option<AzIdRef>,
+}
+
+impl AzRestorePointCollection {
+    /// The backed-up VM's ARM id, whether `source` is flattened or nested.
+    pub fn source_vm(&self) -> Option<&str> {
+        self.source
+            .as_ref()
+            .or_else(|| self.properties.as_ref().and_then(|p| p.source.as_ref()))
+            .and_then(|s| s.id.as_deref())
+    }
+}
+
 /// One entry of `az aks list` (Microsoft.ContainerService/managedClusters).
 /// Only the node resource group is read — that `MC_...` group holds all the
 /// cluster's managed infrastructure (VM scale sets, load balancers, IPs).
