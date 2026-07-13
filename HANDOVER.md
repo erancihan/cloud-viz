@@ -58,7 +58,7 @@ File-by-file:
 | `src/providers/azure/fixtures/*.json` | Recorded `az` output; drives the mapper tests. |
 | `src/providers/demo.rs` | `DemoProvider` + `demo_topology()` sample estate (covers every category + edge kind). |
 | `src/cache.rs` | On-disk topology cache keyed by provider + scope (start-up shows it instantly; ⟳ Refresh fetches live). Bump `cache::VERSION` whenever the `Topology` shape changes. |
-| `src/layout.rs` | Deterministic layout: shelf-packed containers (vnet ▸ subnet ▸ members) + a top-level compound spring embedder that clusters connected resources; `Rect` helpers; spacing constants. |
+| `src/layout.rs` | Deterministic layout: shelf-packed containers (vnet ▸ subnet ▸ members) + a top-level compound spring embedder that clusters connected resources, then aligns all virtual networks onto one horizontal row; `Rect` helpers; spacing constants. |
 | `src/geom.rs` | Edge routing (`route_edge`, `EdgePath`, arrowheads, `label_t` stagger). |
 | `src/theme.rs` | `Theme` (`LIGHT`/`DARK`), `Rgb`, `mix()`, per-category colors. |
 | `src/ui/canvas.rs` | Camera (pan/zoom), hit-testing, painting containers/cards/edges, minimap. |

@@ -150,6 +150,46 @@ pub fn demo_topology() -> Topology {
         },
     ]);
 
+    // A second virtual network so the horizontal vnet alignment is visible;
+    // holds a jumpbox VM in its own subnet.
+    let vnet_spoke = id("rg-network", "vnet-spoke");
+    let snet_jump = format!("{vnet_spoke}/snet-jump");
+    defs.extend([
+        Def {
+            id: vnet_spoke.clone(),
+            name: "vnet-spoke",
+            kind: "Microsoft.Network/virtualNetworks",
+            kind_label: "Virtual network",
+            category: Network,
+            parent: None,
+            container: true,
+            group: Some("rg-network"),
+            metadata: vec![("addressSpace", "10.1.0.0/16")],
+        },
+        Def {
+            id: snet_jump.clone(),
+            name: "snet-jump",
+            kind: "Microsoft.Network/virtualNetworks/subnets",
+            kind_label: "Subnet",
+            category: Network,
+            parent: Some(vnet_spoke.clone()),
+            container: true,
+            group: None,
+            metadata: vec![("addressPrefix", "10.1.0.0/24")],
+        },
+        Def {
+            id: id("rg-ops", "vm-jump"),
+            name: "vm-jump",
+            kind: "Microsoft.Compute/virtualMachines",
+            kind_label: "Virtual machine",
+            category: Compute,
+            parent: Some(snet_jump.clone()),
+            container: false,
+            group: Some("rg-ops"),
+            metadata: vec![("size", "Standard_B2s"), ("os", "Ubuntu 24.04")],
+        },
+    ]);
+
     // AKS cluster — a container box holding its node resource group's managed
     // infrastructure (VM scale set + load-balancer public IP), mirroring how
     // the Azure mapper nests everything in `MC_<cluster>_<rg>_<region>`.
@@ -394,6 +434,7 @@ pub fn demo_topology() -> Topology {
         &[("nic", "nic-web-02", false), ("ssh key", "ssh-admin", true)],
     );
     attach("app-portal", &[("slot", "staging", false)]);
+    attach("vm-jump", &[("nic", "nic-jump", false)]);
     // The load balancer's frontend IP folds in like a VM's public IP would.
     attach("lb-web", &[("public ip", "pip-gateway", false)]);
 
