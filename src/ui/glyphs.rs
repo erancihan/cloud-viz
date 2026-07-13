@@ -180,6 +180,72 @@ pub fn draw(painter: &Painter, rect: Rect, category: ResourceCategory, color: Co
     }
 }
 
+/// Mini glyphs for attachment rows on a card (disk / nic / extension / slot),
+/// same 16x16 grid as the category glyphs. Mirrored by
+/// `export.rs::attachment_glyph_svg` — keep the two in sync.
+pub fn draw_attachment(painter: &Painter, rect: Rect, kind: &str, color: Color32) {
+    let s = rect.width() / 16.0;
+    let o = rect.min;
+    let p = |x: f32, y: f32| Pos2::new(o.x + x * s, o.y + y * s);
+    let stroke = Stroke::new((1.5 * s).max(1.0), color);
+    let line =
+        |pts: &[(f32, f32)]| Shape::line(pts.iter().map(|&(x, y)| p(x, y)).collect(), stroke);
+    let closed = |pts: &[(f32, f32)]| {
+        Shape::closed_line(pts.iter().map(|&(x, y)| p(x, y)).collect(), stroke)
+    };
+
+    match kind {
+        // Drive: flat box with a status dot.
+        "disk" => {
+            painter.add(closed(&[
+                (2.5, 4.5),
+                (13.5, 4.5),
+                (13.5, 11.5),
+                (2.5, 11.5),
+            ]));
+            painter.add(line(&[(2.5, 8.7), (13.5, 8.7)]));
+            painter.add(Shape::circle_filled(p(11.4, 10.1), 0.8 * s, color));
+        }
+        // Reuse the network triangle for NICs.
+        "nic" => draw(painter, rect, ResourceCategory::Network, color),
+        // Puzzle piece with a top tab.
+        "extension" => {
+            painter.add(closed(&[
+                (2.8, 7.0),
+                (6.2, 7.0),
+                (6.2, 5.4),
+                (7.1, 4.4),
+                (8.9, 4.4),
+                (9.8, 5.4),
+                (9.8, 7.0),
+                (13.2, 7.0),
+                (13.2, 13.2),
+                (2.8, 13.2),
+            ]));
+        }
+        // Two stacked layers for deployment slots.
+        "slot" => {
+            painter.add(closed(&[
+                (3.0, 3.0),
+                (10.4, 3.0),
+                (10.4, 10.4),
+                (3.0, 10.4),
+            ]));
+            painter.add(closed(&[
+                (5.6, 5.6),
+                (13.0, 5.6),
+                (13.0, 13.0),
+                (5.6, 13.0),
+            ]));
+        }
+        _ => {
+            for x in [4.0, 8.0, 12.0] {
+                painter.add(Shape::circle_filled(p(x, 8.0), 1.0 * s, color));
+            }
+        }
+    }
+}
+
 /// Elliptical arc approximated by a polyline (egui has no arc primitive).
 fn arc(center: Pos2, rx: f32, ry: f32, from: f32, to: f32, stroke: Stroke) -> Shape {
     const STEPS: usize = 20;

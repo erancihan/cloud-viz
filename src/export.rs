@@ -4,7 +4,7 @@
 //! infrastructure snapshots.
 
 use crate::geom::{label_t, route_edge};
-use crate::layout::{layout_topology, Rect};
+use crate::layout::{attachment_rows, layout_topology, Rect, ATTACH_PAD, ATTACH_ROW, LEAF_H};
 use crate::model::{EdgeKind, ResourceCategory, Topology};
 use crate::theme::{mix, Rgb, Theme};
 use std::fmt::Write;
@@ -191,9 +191,10 @@ pub fn to_svg(topology: &Topology, theme: &Theme) -> String {
             r.h - 12.0,
             cat.hex()
         );
-        // icon chip + glyph
+        // icon chip + glyph, centered in the card head (attachment rows,
+        // when present, live below LEAF_H).
         let chip = 32.0;
-        let (cx, cy) = (r.x + 14.0, r.y + (r.h - chip) / 2.0);
+        let (cx, cy) = (r.x + 14.0, r.y + (LEAF_H - chip) / 2.0);
         let _ = write!(
             svg,
             r#"<rect x="{cx:.1}" y="{cy:.1}" width="{chip}" height="{chip}" rx="8" fill="{}" fill-opacity="0.14"/>"#,
@@ -208,8 +209,8 @@ pub fn to_svg(topology: &Topology, theme: &Theme) -> String {
             glyph_svg(node.category, cat)
         );
         let tx = cx + chip + 12.0;
-        let mid = r.y + r.h / 2.0;
-        if let Some(subtext) = node.card_subtext() {
+        let mid = r.y + LEAF_H / 2.0;
+        if let Some(group) = &node.group {
             let _ = write!(
                 svg,
                 r#"<text x="{tx:.1}" y="{:.1}" font-size="12.5" font-weight="600" fill="{}">{}</text>"#,
@@ -229,7 +230,7 @@ pub fn to_svg(topology: &Topology, theme: &Theme) -> String {
                 r#"<text x="{tx:.1}" y="{:.1}" font-size="10.5" fill="{}" fill-opacity="0.78">{}</text>"#,
                 mid + 17.0,
                 theme.ink_3.hex(),
-                escape(&truncate(&subtext, 30))
+                escape(&truncate(group, 26))
             );
         } else {
             let _ = write!(
@@ -246,6 +247,54 @@ pub fn to_svg(topology: &Topology, theme: &Theme) -> String {
                 theme.ink_3.hex(),
                 escape(&truncate(&node.kind_label, 26))
             );
+        }
+
+        // Attachment rows below the head: mini icon + name each, with a
+        // "+N more" overflow row (mirrors ui/canvas.rs).
+        if !node.attachments.is_empty() {
+            let _ = write!(
+                svg,
+                r#"<line x1="{:.1}" y1="{:.1}" x2="{:.1}" y2="{:.1}" stroke="{}" stroke-width="1"/>"#,
+                r.x + 12.0,
+                r.y + LEAF_H,
+                r.right() - 12.0,
+                r.y + LEAF_H,
+                theme.hairline.hex()
+            );
+            let rows = attachment_rows(node.attachments.len());
+            let overflow = node.attachments.len() > rows;
+            for i in 0..rows {
+                let cy = r.y + LEAF_H + ATTACH_PAD + (i as f32 + 0.5) * ATTACH_ROW;
+                if overflow && i == rows - 1 {
+                    let hidden = node.attachments.len() - (rows - 1);
+                    let _ = write!(
+                        svg,
+                        r#"<text x="{:.1}" y="{:.1}" font-size="10.5" fill="{}">+{hidden} more</text>"#,
+                        r.x + 38.0,
+                        cy + 3.5,
+                        theme.ink_3.hex()
+                    );
+                    break;
+                }
+                let (kind, name) = &node.attachments[i];
+                // 16-grid glyph scaled to 11px, centered on (x=27, cy).
+                let _ = write!(
+                    svg,
+                    r#"<g transform="translate({:.1},{:.1}) scale(0.6875)" stroke="{}" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round">{}</g>"#,
+                    r.x + 27.0 - 5.5,
+                    cy - 5.5,
+                    theme.ink_3.hex(),
+                    attachment_glyph_svg(kind, theme.ink_3)
+                );
+                let _ = write!(
+                    svg,
+                    r#"<text x="{:.1}" y="{:.1}" font-size="10.5" fill="{}">{}</text>"#,
+                    r.x + 38.0,
+                    cy + 3.5,
+                    theme.ink_2.hex(),
+                    escape(&truncate(name, 24))
+                );
+            }
         }
     }
 
@@ -275,6 +324,39 @@ fn escape(s: &str) -> String {
     s.replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
+}
+
+/// 16x16 mini glyphs for card attachment rows (mirrors
+/// `ui/glyphs.rs::draw_attachment` — keep the two in sync).
+fn attachment_glyph_svg(kind: &str, color: Rgb) -> String {
+    match kind {
+        "disk" => concat!(
+            r#"<rect x="2.5" y="4.5" width="11" height="7" rx="1"/>"#,
+            r#"<path d="M2.5 8.7h11"/>"#
+        )
+        .to_string()
+            + &format!(
+                r#"<circle cx="11.4" cy="10.1" r="0.8" fill="{}" stroke="none"/>"#,
+                color.hex()
+            ),
+        "nic" => concat!(
+            r#"<circle cx="8" cy="3.5" r="1.8"/><circle cx="3.5" cy="12" r="1.8"/><circle cx="12.5" cy="12" r="1.8"/>"#,
+            r#"<path d="M7 5.1 4.4 10.4M9 5.1l2.6 5.3M5.3 12h5.4"/>"#
+        )
+        .to_string(),
+        "extension" => {
+            r#"<path d="M2.8 7h3.4V5.4l.9-1h1.8l.9 1V7h3.4v6.2H2.8Z"/>"#.to_string()
+        }
+        "slot" => concat!(
+            r#"<rect x="3" y="3" width="7.4" height="7.4" rx="1"/>"#,
+            r#"<rect x="5.6" y="5.6" width="7.4" height="7.4" rx="1"/>"#
+        )
+        .to_string(),
+        _ => format!(
+            r#"<g fill="{}" stroke="none"><circle cx="4" cy="8" r="1"/><circle cx="8" cy="8" r="1"/><circle cx="12" cy="8" r="1"/></g>"#,
+            color.hex()
+        ),
+    }
 }
 
 /// 16x16 line glyphs, one per category (mirrors the in-app painter glyphs).

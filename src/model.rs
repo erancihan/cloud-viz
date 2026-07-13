@@ -92,33 +92,6 @@ pub struct TopologyNode {
     pub metadata: Vec<(String, String)>,
 }
 
-impl TopologyNode {
-    /// Compact third card line: resource group plus a summary of folded-in
-    /// attachments, e.g. `rg-app · 2 disks · 1 extension`. Shared by the egui
-    /// canvas and the SVG exporter so the two painters stay in sync.
-    pub fn card_subtext(&self) -> Option<String> {
-        let mut parts: Vec<String> = Vec::new();
-        if let Some(group) = &self.group {
-            parts.push(group.clone());
-        }
-        let mut counts: Vec<(&str, usize)> = Vec::new();
-        for (kind, _) in &self.attachments {
-            match counts.iter_mut().find(|(k, _)| *k == kind.as_str()) {
-                Some((_, n)) => *n += 1,
-                None => counts.push((kind, 1)),
-            }
-        }
-        for (kind, n) in counts {
-            parts.push(if n == 1 {
-                format!("1 {kind}")
-            } else {
-                format!("{n} {kind}s")
-            });
-        }
-        (!parts.is_empty()).then(|| parts.join(" · "))
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum EdgeKind {
     Association,

@@ -380,9 +380,12 @@ fn draw_card(
         return;
     }
 
+    // The head (chip + text lines) occupies the top LEAF_H of the card;
+    // attachment rows, when present, live below it.
+    let head_h = crate::layout::LEAF_H * zoom;
     let chip_size = 32.0 * zoom;
     let chip = Rect::from_min_size(
-        rect.min + Vec2::new(14.0 * zoom, (rect.height() - chip_size) / 2.0),
+        rect.min + Vec2::new(14.0 * zoom, (head_h - chip_size) / 2.0),
         Vec2::splat(chip_size),
     );
     painter.rect_filled(chip, 8.0 * zoom, c32a(cat, 36));
@@ -397,10 +400,8 @@ fn draw_card(
     let max_w = rect.right() - 10.0 * zoom - tx;
     let name_font = FontId::proportional((12.5 * zoom).max(6.0));
     let sub_font = FontId::proportional((10.5 * zoom).max(5.0));
-    let cy = rect.center().y;
-    // A third subtext line carries the resource group and folded-in
-    // attachments ("rg-app · 2 disks · 1 nic") when present.
-    if let Some(subtext) = node.card_subtext() {
+    let cy = rect.min.y + head_h / 2.0;
+    if let Some(group) = &node.group {
         let line = 13.0 * zoom;
         draw_truncated(
             painter,
@@ -424,8 +425,8 @@ fn draw_card(
             painter,
             Pos2::new(tx, cy + line),
             Align2::LEFT_CENTER,
-            &subtext,
-            sub_font,
+            group,
+            sub_font.clone(),
             c32a(theme.ink_3, 200),
             max_w,
         );
@@ -444,10 +445,55 @@ fn draw_card(
             Pos2::new(tx, cy + 2.0 * zoom),
             Align2::LEFT_TOP,
             &node.kind_label,
-            sub_font,
+            sub_font.clone(),
             c32(theme.ink_3),
             max_w,
         );
+    }
+
+    // Attachment rows: a mini icon + name per folded-in subsidiary (disks,
+    // NICs, extensions, slots), capped with a "+N more" overflow row.
+    if !node.attachments.is_empty() {
+        use crate::layout::{attachment_rows, ATTACH_PAD, ATTACH_ROW, LEAF_H};
+        let divider_y = rect.min.y + LEAF_H * zoom;
+        painter.line_segment(
+            [
+                Pos2::new(rect.min.x + 12.0 * zoom, divider_y),
+                Pos2::new(rect.max.x - 12.0 * zoom, divider_y),
+            ],
+            Stroke::new(1.0, c32(theme.hairline)),
+        );
+        let rows = attachment_rows(node.attachments.len());
+        let overflow = node.attachments.len() > rows;
+        for i in 0..rows {
+            let cy = rect.min.y + (LEAF_H + ATTACH_PAD + (i as f32 + 0.5) * ATTACH_ROW) * zoom;
+            if overflow && i == rows - 1 {
+                let hidden = node.attachments.len() - (rows - 1);
+                painter.text(
+                    Pos2::new(rect.min.x + 38.0 * zoom, cy),
+                    Align2::LEFT_CENTER,
+                    format!("+{hidden} more"),
+                    sub_font.clone(),
+                    c32(theme.ink_3),
+                );
+                break;
+            }
+            let (kind, name) = &node.attachments[i];
+            let icon = Rect::from_center_size(
+                Pos2::new(rect.min.x + 27.0 * zoom, cy),
+                Vec2::splat(11.0 * zoom),
+            );
+            glyphs::draw_attachment(painter, icon, kind, c32(theme.ink_3));
+            draw_truncated(
+                painter,
+                Pos2::new(rect.min.x + 38.0 * zoom, cy),
+                Align2::LEFT_CENTER,
+                name,
+                sub_font.clone(),
+                c32(theme.ink_2),
+                rect.max.x - 10.0 * zoom - (rect.min.x + 38.0 * zoom),
+            );
+        }
     }
 }
 
