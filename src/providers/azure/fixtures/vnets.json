@@ -9,7 +9,10 @@
       {
         "addressPrefix": "10.0.0.0/24",
         "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-net/providers/Microsoft.Network/virtualNetworks/vnet-hub/subnets/snet-a",
-        "name": "snet-a"
+        "name": "snet-a",
+        "networkSecurityGroup": {
+          "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-net/providers/Microsoft.Network/networkSecurityGroups/nsg-web"
+        }
       },
       {
         "addressPrefix": "10.0.1.0/24",

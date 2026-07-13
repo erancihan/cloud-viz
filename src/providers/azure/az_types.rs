@@ -34,6 +34,10 @@ pub struct AzResource {
     pub resource_type: String,
     #[serde(default, rename = "resourceGroup")]
     pub resource_group: Option<String>,
+    /// ARM's generic ownership pointer — for an attached managed disk this is
+    /// the owning VM's resource id.
+    #[serde(default, rename = "managedBy")]
+    pub managed_by: Option<String>,
     #[serde(default)]
     pub location: Option<String>,
     #[serde(default)]
@@ -72,6 +76,8 @@ pub struct AzSubnet {
     pub address_prefix: Option<String>,
     #[serde(default, rename = "addressPrefixes")]
     pub address_prefixes: Vec<String>,
+    #[serde(default, rename = "networkSecurityGroup")]
+    pub network_security_group: Option<AzIdRef>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -79,6 +85,8 @@ pub struct AzNic {
     pub id: String,
     #[serde(default, rename = "virtualMachine")]
     pub virtual_machine: Option<AzIdRef>,
+    #[serde(default, rename = "networkSecurityGroup")]
+    pub network_security_group: Option<AzIdRef>,
     #[serde(default, rename = "ipConfigurations")]
     pub ip_configurations: Vec<AzNicIpConfiguration>,
 }

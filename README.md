@@ -36,12 +36,17 @@ cargo run -- --export-svg topo.svg --provider azure      # your live estate
 
 - Fetches an Azure subscription's inventory through `az` (subscriptions,
   resource groups, all resources, virtual networks/subnets, NICs).
+- Caches the fetched topology on disk (`~/.cache/cloudviz`,
+  `%LOCALAPPDATA%\cloudviz\cache`) and shows it instantly on the next
+  start-up instead of re-running the inventory; the status bar shows the
+  cache age and **⟳ Refresh** always fetches live.
 - Normalizes it into a provider-agnostic topology graph.
 - Lays out resources by dependency: a compound spring embedder clusters
   connected resources together, nests vnet ▸ subnet ▸ members, and shows the
   resource group as card subtext instead of a container box (the subscription
-  is already in the toolbar). Relationship edges (VM → NIC, NIC → public IP,
-  app → plan, …) route as relaxed bezier curves.
+  is already in the toolbar). Relationship edges (VM → NIC, VM → managed
+  disk via ARM's `managedBy`, NIC → public IP, NSG → subnet/NIC, app → plan,
+  …) route as relaxed bezier curves.
 - Pan (drag), zoom (scroll, cursor-anchored), fit-to-view, clickable minimap,
   light/dark themes, fullscreen (F11), details panel per resource.
 - Degrades gracefully: CLI missing → install guidance; signed out →
@@ -113,6 +118,11 @@ The provider then shows up in the toolbar dropdown automatically.
 `az resource list` · `az network vnet list` · `az network nic list`
 (all with `--output json --only-show-errors`; the last two are best-effort
 enrichment and only produce warnings when they fail).
+
+Associations are read from fields already present in those responses — no
+extra calls: `managedBy` on `az resource list` (an attached managed disk
+points at its VM), `networkSecurityGroup` on subnets and NICs, and the NIC's
+`virtualMachine` / `subnet` / `publicIPAddress` references.
 
 ## Roadmap
 

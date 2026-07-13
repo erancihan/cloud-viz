@@ -57,6 +57,7 @@ File-by-file:
 | `src/providers/azure/mod.rs` | `AzureProvider`: status / scopes / fetch orchestration; required vs best-effort listings. |
 | `src/providers/azure/fixtures/*.json` | Recorded `az` output; drives the mapper tests. |
 | `src/providers/demo.rs` | `DemoProvider` + `demo_topology()` sample estate (covers every category + edge kind). |
+| `src/cache.rs` | On-disk topology cache keyed by provider + scope (start-up shows it instantly; ⟳ Refresh fetches live). Bump `cache::VERSION` whenever the `Topology` shape changes. |
 | `src/layout.rs` | Deterministic layout: shelf-packed containers (vnet ▸ subnet ▸ members) + a top-level compound spring embedder that clusters connected resources; `Rect` helpers; spacing constants. |
 | `src/geom.rs` | Edge routing (`route_edge`, `EdgePath`, arrowheads, `label_t` stagger). |
 | `src/theme.rs` | `Theme` (`LIGHT`/`DARK`), `Rgb`, `mix()`, per-category colors. |
@@ -133,9 +134,12 @@ When you touch `ui/canvas.rs` interaction code, run the app locally.
 ## 7. Known limitations / gaps
 
 - **Read-only.** No create/rename/tag/delete yet (deliberate; see roadmap).
-- **Edge coverage is shallow.** Only NIC-derived relationships
-  (VM→NIC→subnet, NIC→public IP) plus the demo's hand-authored edges. No load
-  balancer wiring, private endpoints, VNet peering, or app→database links.
+- **Edge coverage is moderate.** NIC-derived relationships (VM→NIC, NIC→public
+  IP, NIC nested into its subnet), ARM `managedBy` ownership (VM→managed
+  disk, …), and NSG→subnet/NIC associations — all read from the existing
+  listings. Still missing: load balancer backend wiring, private endpoints,
+  VNet peering, app→database links (candidates: `az vm list` storage/network
+  profiles, `az network lb list`, or Azure Resource Graph).
 - **Azure is the only live provider.**
 - **No CI.** fmt/clippy/test are manual. First recommended task below.
 - **No PNG export, no saved snapshots / drift comparison.**

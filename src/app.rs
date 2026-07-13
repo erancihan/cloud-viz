@@ -1,6 +1,7 @@
 //! The eframe application: provider/scope state machine, background fetch
 //! workers, toolbar, details panel, and error guidance screens.
 
+use crate::cache;
 use crate::layout::{layout_topology, Layout};
 use crate::model::*;
 use crate::providers::{builtin_providers, CloudProvider};
@@ -11,6 +12,7 @@ use eframe::egui::{self, Align, ComboBox, Context, FontId, Layout as EguiLayout,
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::Arc;
 use std::thread;
+use std::time::Duration;
 
 enum WorkerMsg {
     Status {
@@ -24,6 +26,8 @@ enum WorkerMsg {
     Topology {
         generation: u64,
         result: Result<Topology, ProviderError>,
+        /// Some(age) when served from the on-disk cache instead of a fetch.
+        cache_age: Option<Duration>,
     },
 }
 
@@ -46,6 +50,8 @@ pub struct CloudVizApp {
     theme: Theme,
     camera: Camera,
     fullscreen: bool,
+    /// Some(age at load) when the current topology came from the disk cache.
+    cache_age: Option<Duration>,
     tx: Sender<WorkerMsg>,
     rx: Receiver<WorkerMsg>,
     generation: u64,
@@ -69,6 +75,7 @@ impl CloudVizApp {
             theme: theme::DARK,
             camera: Camera::default(),
             fullscreen: false,
+            cache_age: None,
             tx,
             rx,
             generation: 0,
@@ -117,14 +124,37 @@ impl CloudVizApp {
                 result: scopes,
             });
             repaint();
+            // Start-up prefers the on-disk cache over re-running the whole
+            // CLI inventory; ⟳ Refresh fetches live.
+            let info = provider.info();
+            let scope_key = default_scope.clone().unwrap_or_else(|| "default".into());
+            if !info.demo {
+                if let Some(hit) = cache::load(info.id, &scope_key) {
+                    let _ = tx.send(WorkerMsg::Topology {
+                        generation,
+                        result: Ok(hit.topology),
+                        cache_age: Some(hit.age),
+                    });
+                    repaint();
+                    return;
+                }
+            }
             let result = provider.fetch_topology(default_scope.as_deref());
-            let _ = tx.send(WorkerMsg::Topology { generation, result });
+            if let (Ok(topology), false) = (&result, info.demo) {
+                cache::save(info.id, &scope_key, topology);
+            }
+            let _ = tx.send(WorkerMsg::Topology {
+                generation,
+                result,
+                cache_age: None,
+            });
             repaint();
         });
     }
 
-    /// Re-fetch topology only (scope switch or manual refresh).
-    fn start_topology_fetch(&mut self, ctx: Context) {
+    /// Re-fetch topology only (scope switch or manual refresh). `force` skips
+    /// the on-disk cache — the ⟳ Refresh button always fetches live.
+    fn start_topology_fetch(&mut self, ctx: Context, force: bool) {
         self.generation += 1;
         let generation = self.generation;
         self.phase = Phase::Working("Fetching topology…");
@@ -134,8 +164,28 @@ impl CloudVizApp {
         let scope = self.scope_id.clone();
         let tx = self.tx.clone();
         thread::spawn(move || {
+            let info = provider.info();
+            let scope_key = scope.clone().unwrap_or_else(|| "default".into());
+            if !force && !info.demo {
+                if let Some(hit) = cache::load(info.id, &scope_key) {
+                    let _ = tx.send(WorkerMsg::Topology {
+                        generation,
+                        result: Ok(hit.topology),
+                        cache_age: Some(hit.age),
+                    });
+                    ctx.request_repaint();
+                    return;
+                }
+            }
             let result = provider.fetch_topology(scope.as_deref());
-            let _ = tx.send(WorkerMsg::Topology { generation, result });
+            if let (Ok(topology), false) = (&result, info.demo) {
+                cache::save(info.id, &scope_key, topology);
+            }
+            let _ = tx.send(WorkerMsg::Topology {
+                generation,
+                result,
+                cache_age: None,
+            });
             ctx.request_repaint();
         });
     }
@@ -169,17 +219,20 @@ impl CloudVizApp {
                         Err(err) => self.phase = Phase::Failed(err),
                     }
                 }
-                WorkerMsg::Topology { generation, result } if generation == self.generation => {
-                    match result {
-                        Ok(topology) => {
-                            self.layout = Some(layout_topology(&topology));
-                            self.topology = Some(topology);
-                            self.camera = Camera::default(); // triggers fit-to-view
-                            self.phase = Phase::Ready;
-                        }
-                        Err(err) => self.phase = Phase::Failed(err),
+                WorkerMsg::Topology {
+                    generation,
+                    result,
+                    cache_age,
+                } if generation == self.generation => match result {
+                    Ok(topology) => {
+                        self.layout = Some(layout_topology(&topology));
+                        self.topology = Some(topology);
+                        self.cache_age = cache_age;
+                        self.camera = Camera::default(); // triggers fit-to-view
+                        self.phase = Phase::Ready;
                     }
-                }
+                    Err(err) => self.phase = Phase::Failed(err),
+                },
                 _ => {} // stale generation
             }
         }
@@ -255,7 +308,7 @@ impl CloudVizApp {
                     });
                 if let Some(id) = changed {
                     self.scope_id = Some(id);
-                    self.start_topology_fetch(ctx.clone());
+                    self.start_topology_fetch(ctx.clone(), false);
                 }
             }
 
@@ -268,7 +321,7 @@ impl CloudVizApp {
                 )
                 .clicked()
             {
-                self.start_topology_fetch(ctx.clone());
+                self.start_topology_fetch(ctx.clone(), true);
             }
             if ui.button("Fit view").clicked() {
                 self.camera.needs_fit = true;
@@ -329,6 +382,14 @@ impl CloudVizApp {
                         ))
                         .color(muted),
                     );
+                    if let Some(age) = self.cache_age {
+                        ui.label(
+                            RichText::new(format!("·  cached {} ago", fmt_age(age))).color(muted),
+                        )
+                        .on_hover_text(
+                            "Showing locally cached inventory — press ⟳ Refresh to fetch live data",
+                        );
+                    }
                     if !t.warnings.is_empty() {
                         ui.label(
                             RichText::new(format!("⚠ {} warnings", t.warnings.len()))
@@ -571,6 +632,16 @@ impl eframe::App for CloudVizApp {
         if matches!(self.phase, Phase::Working(_)) {
             ctx.request_repaint_after(std::time::Duration::from_millis(120));
         }
+    }
+}
+
+fn fmt_age(age: Duration) -> String {
+    let secs = age.as_secs();
+    match secs {
+        0..=59 => "moments".into(),
+        60..=3599 => format!("{}m", secs / 60),
+        3600..=86399 => format!("{}h", secs / 3600),
+        _ => format!("{}d", secs / 86400),
     }
 }
 
