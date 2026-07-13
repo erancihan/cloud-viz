@@ -463,10 +463,7 @@ mod tests {
         }
         // NIC/disk/extension ride on the VM card, not as nodes.
         assert!(!t.nodes.iter().any(|n| n.name.starts_with("nic-web")));
-        assert_eq!(
-            by_name("vm-web-01").card_subtext().as_deref(),
-            Some("rg-app · 1 disk · 1 extension · 1 nic")
-        );
+        assert_eq!(by_name("vm-web-01").attachments.len(), 3);
         // subnets nest inside the vnet
         let vnet = by_name("vnet-hub");
         assert!(vnet.container);

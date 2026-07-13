@@ -166,7 +166,9 @@ When you touch `ui/canvas.rs` interaction code, run the app locally.
 ## 9. Gotchas
 
 - **Two glyph painters** exist (`ui/glyphs.rs` for egui, `export.rs::glyph_svg`
-  for SVG). Changing an icon means changing both.
+  for SVG) — and likewise for the attachment-row mini icons
+  (`glyphs::draw_attachment` / `export.rs::attachment_glyph_svg`). Changing an
+  icon means changing both.
 - **Windows `az`** is a `.cmd` shim — `cli.rs` already routes through `cmd /C`;
   don't "simplify" that away.
 - **Best-effort listings**: `az network vnet/nic list` failures become

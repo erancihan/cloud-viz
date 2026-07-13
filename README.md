@@ -48,10 +48,10 @@ cargo run -- --export-svg topo.svg --provider azure      # your live estate
   instead of a container box (the subscription is already in the toolbar).
 - Folds subsidiary resources into their owner's card instead of drawing
   them as nodes: attached managed disks (via ARM's `managedBy`), NICs, VM
-  extensions, and deployment slots appear as a card summary
-  ("rg-app · 1 disk · 1 nic") and a full list in the details panel.
-  Remaining relationships (VM → public IP, NSG → subnet/VM, LB → IP, …)
-  route as relaxed bezier curves.
+  extensions, and deployment slots render as icon rows on the card itself
+  (disk / network / puzzle / layers glyphs, "+N more" past four), with the
+  full list in the details panel. Remaining relationships (VM → public IP,
+  NSG → subnet/VM, LB → IP, …) route as relaxed bezier curves.
 - Pan (drag), zoom (scroll, cursor-anchored), fit-to-view, clickable minimap,
   light/dark themes, fullscreen (F11), details panel per resource.
 - Degrades gracefully: CLI missing → install guidance; signed out →

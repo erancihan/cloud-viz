@@ -15,12 +15,34 @@ use std::collections::{HashMap, HashSet};
 // Spacing constants. Generous on purpose: cards and containers get room to
 // breathe so relationship edges route loosely instead of hugging the nodes.
 pub const LEAF_W: f32 = 240.0;
+/// Height of a card's head (name / kind / group lines). Cards with
+/// attachments grow below this by one `ATTACH_ROW` per visible row.
 pub const LEAF_H: f32 = 76.0;
+pub const ATTACH_ROW: f32 = 21.0;
+pub const ATTACH_PAD: f32 = 7.0;
+/// Cap on attachment rows painted on a card; extras collapse into a final
+/// "+N more" row so a disk-heavy VM can't dwarf the diagram.
+pub const MAX_ATTACH_ROWS: usize = 4;
 pub const GAP: f32 = 36.0;
 pub const PAD: f32 = 28.0;
 pub const HEADER: f32 = 52.0;
 const EMPTY_W: f32 = 280.0;
 const EMPTY_H: f32 = 116.0;
+
+/// Number of attachment rows a card actually paints.
+pub fn attachment_rows(count: usize) -> usize {
+    count.min(MAX_ATTACH_ROWS)
+}
+
+/// Leaf card height: the fixed head plus the attachment rows, if any.
+pub fn leaf_height(node: &TopologyNode) -> f32 {
+    let rows = attachment_rows(node.attachments.len());
+    if rows == 0 {
+        LEAF_H
+    } else {
+        LEAF_H + ATTACH_PAD * 2.0 + rows as f32 * ATTACH_ROW
+    }
+}
 /// Wider-than-tall packing bias — screens are landscape.
 const ASPECT_BIAS: f32 = 2.1;
 
@@ -159,7 +181,7 @@ pub fn layout_topology(topology: &Topology) -> Layout {
                 let (w, h) = if node.container {
                     (EMPTY_W, EMPTY_H)
                 } else {
-                    (LEAF_W, LEAF_H)
+                    (LEAF_W, leaf_height(node))
                 };
                 Measured {
                     node_index: i,
@@ -538,6 +560,30 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn cards_grow_to_fit_attachment_rows() {
+        let topo = demo_topology();
+        let layout = layout_topology(&topo);
+        for p in &layout.placed {
+            if !p.is_container {
+                let node = &topo.nodes[p.index];
+                assert!(
+                    (p.rect.h - leaf_height(node)).abs() < 0.001,
+                    "{} has wrong card height",
+                    node.name
+                );
+            }
+        }
+        // vm-web-01 carries attachments, so its card is taller than the head.
+        let vm = topo
+            .nodes
+            .iter()
+            .position(|n| n.name == "vm-web-01")
+            .unwrap();
+        let placed = layout.placed.iter().find(|p| p.index == vm).unwrap();
+        assert!(placed.rect.h > LEAF_H);
     }
 
     #[test]

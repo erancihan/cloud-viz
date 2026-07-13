@@ -632,11 +632,6 @@ mod tests {
                 ("nic".to_string(), "nic-web-01".to_string()),
             ]
         );
-        assert_eq!(
-            vm.card_subtext().as_deref(),
-            Some("rg-app · 1 disk · 1 extension · 1 nic")
-        );
-
         // An unattached disk stays visible as its own node.
         let orphan = find(&t, "disk-orphan");
         assert!(orphan.attachments.is_empty());
