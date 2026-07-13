@@ -454,7 +454,38 @@ fn force_layout(
         }
     }
 
-    separate(&mut pos, &sizes, GAP);
+    // Horizontal alignment constraint (fCoSE-style): put every virtual network
+    // on one horizontal line, laid out left-to-right in their settled x order,
+    // then push everything else clear of that band with the vnets pinned.
+    let vnets: Vec<usize> = (0..n)
+        .filter(|&i| nodes[roots[i].node_index].kind == "Microsoft.Network/virtualNetworks")
+        .collect();
+    if vnets.len() >= 2 {
+        let center_y = vnets.iter().map(|&i| pos[i].1).sum::<f32>() / vnets.len() as f32;
+        let center_x = vnets.iter().map(|&i| pos[i].0).sum::<f32>() / vnets.len() as f32;
+        let mut order = vnets.clone();
+        order.sort_by(|&a, &b| {
+            pos[a]
+                .0
+                .partial_cmp(&pos[b].0)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| {
+                    nodes[roots[a].node_index]
+                        .id
+                        .cmp(&nodes[roots[b].node_index].id)
+                })
+        });
+        let total_w: f32 =
+            order.iter().map(|&i| sizes[i].0).sum::<f32>() + GAP * (order.len() as f32 - 1.0);
+        let mut cursor = center_x - total_w / 2.0;
+        for &i in &order {
+            pos[i] = (cursor + sizes[i].0 / 2.0, center_y);
+            cursor += sizes[i].0 + GAP;
+        }
+        separate(&mut pos, &sizes, GAP, &vnets.into_iter().collect());
+    } else {
+        separate(&mut pos, &sizes, GAP, &HashSet::new());
+    }
 
     pos.iter()
         .zip(&sizes)
@@ -463,9 +494,10 @@ fn force_layout(
 }
 
 /// Push overlapping boxes apart (centers in `pos`, sizes in `sizes`) until each
-/// pair clears `gap` on at least one axis. Deterministic and, for the modest
-/// top-level counts here, converges well within the pass budget.
-fn separate(pos: &mut [(f32, f32)], sizes: &[(f32, f32)], gap: f32) {
+/// pair clears `gap` on at least one axis. Boxes in `fixed` never move — a
+/// conflicting non-fixed box absorbs the whole correction — which keeps the
+/// aligned virtual-network row intact. Deterministic; converges within budget.
+fn separate(pos: &mut [(f32, f32)], sizes: &[(f32, f32)], gap: f32, fixed: &HashSet<usize>) {
     let n = pos.len();
     for _ in 0..600 {
         let mut moved = false;
@@ -477,18 +509,31 @@ fn separate(pos: &mut [(f32, f32)], sizes: &[(f32, f32)], gap: f32) {
                 let dy = pos[j].1 - pos[i].1;
                 let ox = (wi + wj) / 2.0 + gap - dx.abs();
                 let oy = (hi + hj) / 2.0 + gap - dy.abs();
-                if ox > 0.0 && oy > 0.0 {
-                    if ox <= oy {
-                        let push = ox / 2.0 * if dx >= 0.0 { 1.0 } else { -1.0 };
-                        pos[i].0 -= push;
-                        pos[j].0 += push;
-                    } else {
-                        let push = oy / 2.0 * if dy >= 0.0 { 1.0 } else { -1.0 };
-                        pos[i].1 -= push;
-                        pos[j].1 += push;
-                    }
-                    moved = true;
+                if ox <= 0.0 || oy <= 0.0 {
+                    continue;
                 }
+                // Split the correction, unless one side is pinned.
+                let (fi, fj) = (fixed.contains(&i), fixed.contains(&j));
+                if fi && fj {
+                    continue; // both pinned — the vnet row is already clean
+                }
+                let (si, sj) = if fi {
+                    (0.0, 1.0)
+                } else if fj {
+                    (1.0, 0.0)
+                } else {
+                    (0.5, 0.5)
+                };
+                if ox <= oy {
+                    let dir = if dx >= 0.0 { 1.0 } else { -1.0 };
+                    pos[i].0 -= ox * si * dir;
+                    pos[j].0 += ox * sj * dir;
+                } else {
+                    let dir = if dy >= 0.0 { 1.0 } else { -1.0 };
+                    pos[i].1 -= oy * si * dir;
+                    pos[j].1 += oy * sj * dir;
+                }
+                moved = true;
             }
         }
         if !moved {
@@ -568,6 +613,25 @@ mod tests {
                     );
                 }
             }
+        }
+    }
+
+    #[test]
+    fn virtual_networks_are_horizontally_aligned() {
+        let topo = demo_topology();
+        let layout = layout_topology(&topo);
+        let centers: Vec<f32> = layout
+            .placed
+            .iter()
+            .filter(|p| topo.nodes[p.index].kind == "Microsoft.Network/virtualNetworks")
+            .map(|p| p.rect.y + p.rect.h / 2.0)
+            .collect();
+        assert!(centers.len() >= 2, "demo should have multiple vnets");
+        for c in &centers {
+            assert!(
+                (c - centers[0]).abs() < 0.5,
+                "vnets not aligned on a common line: {centers:?}"
+            );
         }
     }
 
