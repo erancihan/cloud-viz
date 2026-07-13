@@ -19,6 +19,9 @@
       }
     ],
     "name": "nic-web-01",
+    "networkSecurityGroup": {
+      "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-net/providers/Microsoft.Network/networkSecurityGroups/nsg-web"
+    },
     "virtualMachine": {
       "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-app/providers/Microsoft.Compute/virtualMachines/vm-web-01"
     }

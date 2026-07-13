@@ -39,5 +39,23 @@
     "sku": { "name": "Standard_LRS" },
     "tags": null,
     "type": "Microsoft.Storage/storageAccounts"
+  },
+  {
+    "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-app/providers/Microsoft.Compute/disks/DataDisk_1",
+    "location": "westeurope",
+    "managedBy": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/RG-APP/providers/Microsoft.Compute/virtualMachines/vm-web-01",
+    "name": "DataDisk_1",
+    "resourceGroup": "rg-app",
+    "sku": { "name": "Premium_LRS" },
+    "tags": null,
+    "type": "Microsoft.Compute/disks"
+  },
+  {
+    "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-net/providers/Microsoft.Network/networkSecurityGroups/nsg-web",
+    "location": "westeurope",
+    "name": "nsg-web",
+    "resourceGroup": "rg-net",
+    "tags": null,
+    "type": "Microsoft.Network/networkSecurityGroups"
   }
 ]

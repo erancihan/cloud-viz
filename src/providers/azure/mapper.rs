@@ -221,6 +221,7 @@ pub fn build_topology(inv: AzureInventory) -> Topology {
 
     // Virtual networks (top-level containers) enriched with address space, each
     // holding its subnets, which in turn hold their member NICs.
+    let mut subnet_nsgs: Vec<(String, String)> = Vec::new(); // (nsg id, subnet id)
     for vnet in &inv.vnets {
         let vnet_id = norm(&vnet.id);
         if !index.contains_key(&vnet_id) {
@@ -255,6 +256,13 @@ pub fn build_topology(inv: AzureInventory) -> Topology {
             let prefix = subnet.address_prefix.clone().or_else(|| {
                 (!subnet.address_prefixes.is_empty()).then(|| subnet.address_prefixes.join(", "))
             });
+            if let Some(nsg) = subnet
+                .network_security_group
+                .as_ref()
+                .and_then(|r| r.id.as_deref())
+            {
+                subnet_nsgs.push((norm(nsg), norm(&subnet.id)));
+            }
             add_node(
                 &mut nodes,
                 &mut index,
@@ -298,11 +306,55 @@ pub fn build_topology(inv: AzureInventory) -> Topology {
         }
     };
 
+    // `managedBy` is ARM's generic ownership pointer: an attached managed
+    // disk points at its VM, a managed application at its appliance, etc.
+    // Surface it as an association edge from the manager to the resource.
+    for resource in &inv.resources {
+        let Some(manager) = resource.managed_by.as_deref().filter(|m| !m.is_empty()) else {
+            continue;
+        };
+        let label = if resource
+            .resource_type
+            .to_lowercase()
+            .starts_with("microsoft.compute/disks")
+        {
+            "attached"
+        } else {
+            "manages"
+        };
+        add_edge(
+            norm(manager),
+            norm(&resource.id),
+            EdgeKind::Association,
+            label,
+            &mut edges,
+        );
+    }
+
+    // NSG associations declared on subnets (from the vnet listing).
+    for (nsg, subnet) in subnet_nsgs {
+        add_edge(nsg, subnet, EdgeKind::Network, "protects", &mut edges);
+    }
+
     for nic in &inv.nics {
         let nic_id = norm(&nic.id);
         let Some(&nic_index) = index.get(&nic_id) else {
             continue; // NIC absent from resource listing; skip rather than invent
         };
+        // NIC-level NSG association (from the nic listing).
+        if let Some(nsg) = nic
+            .network_security_group
+            .as_ref()
+            .and_then(|r| r.id.as_deref())
+        {
+            add_edge(
+                norm(nsg),
+                nic_id.clone(),
+                EdgeKind::Network,
+                "protects",
+                &mut edges,
+            );
+        }
         if let Some(vm) = nic.virtual_machine.as_ref().and_then(|v| v.id.as_deref()) {
             add_edge(
                 norm(vm),
@@ -454,10 +506,18 @@ mod tests {
                 .collect()
         };
 
+        // VM -> NIC (from the nic listing) and VM -> data disk (from managedBy).
         let attached = with_label("attached");
-        assert_eq!(attached.len(), 1);
-        assert!(attached[0].source.contains("virtualmachines/vm-web-01"));
-        assert!(attached[0].target.contains("networkinterfaces/nic-web-01"));
+        assert_eq!(attached.len(), 2);
+        for e in &attached {
+            assert!(e.source.contains("virtualmachines/vm-web-01"));
+        }
+        assert!(attached
+            .iter()
+            .any(|e| e.target.contains("networkinterfaces/nic-web-01")));
+        assert!(attached
+            .iter()
+            .any(|e| e.target.contains("disks/datadisk_1")));
 
         // NIC nesting replaces the old "in subnet" edge; the ghost subnet in a
         // non-existent vnet is ignored, so the NIC lands in snet-a.
@@ -470,6 +530,43 @@ mod tests {
         let public_ip = with_label("public IP");
         assert_eq!(public_ip.len(), 1);
         assert!(public_ip[0].target.contains("publicipaddresses/pip-web"));
+    }
+
+    #[test]
+    fn managed_by_attaches_data_disk_to_its_vm() {
+        // The user-reported case: a VM's data disk was shown with no
+        // association. `az resource list` carries managedBy = the VM id.
+        let t = build();
+        let disk = find(&t, "DataDisk_1");
+        assert_eq!(disk.category, ResourceCategory::Compute);
+        let edge = t
+            .edges
+            .iter()
+            .find(|e| e.target == disk.id)
+            .expect("disk should have an incoming edge");
+        assert!(edge.source.contains("virtualmachines/vm-web-01"));
+        assert_eq!(edge.label.as_deref(), Some("attached"));
+        assert_eq!(edge.kind, EdgeKind::Association);
+    }
+
+    #[test]
+    fn nsg_references_become_protects_edges() {
+        let t = build();
+        let protects: Vec<&TopologyEdge> = t
+            .edges
+            .iter()
+            .filter(|e| e.label.as_deref() == Some("protects"))
+            .collect();
+        // subnet-level (vnet listing) + nic-level (nic listing).
+        assert_eq!(protects.len(), 2);
+        for e in &protects {
+            assert!(e.source.contains("networksecuritygroups/nsg-web"));
+            assert_eq!(e.kind, EdgeKind::Network);
+        }
+        assert!(protects.iter().any(|e| e.target.contains("subnets/snet-a")));
+        assert!(protects
+            .iter()
+            .any(|e| e.target.contains("networkinterfaces/nic-web-01")));
     }
 
     #[test]

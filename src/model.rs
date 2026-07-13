@@ -77,6 +77,8 @@ pub struct TopologyNode {
     pub container: bool,
     /// Resource group / stack name, shown as card subtext. Purely
     /// informational — resource groups are no longer drawn as container boxes.
+    /// `default` so older cached topology files still deserialize.
+    #[serde(default)]
     pub group: Option<String>,
     pub region: Option<String>,
     /// Provider-specific extras surfaced in the details panel (tags, sku…).

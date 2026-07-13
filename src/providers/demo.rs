@@ -225,6 +225,14 @@ pub fn demo_topology() -> Topology {
         ),
         leaf(
             "rg-app",
+            "disk-web-01-data",
+            "Microsoft.Compute/disks",
+            "Managed disk",
+            Compute,
+            vec![("sizeGb", "256"), ("sku", "Premium_LRS")],
+        ),
+        leaf(
+            "rg-app",
             "plan-portal",
             "Microsoft.Web/serverfarms",
             "App Service plan",
@@ -352,6 +360,13 @@ pub fn demo_topology() -> Topology {
         (
             id("rg-app", "vm-web-02"),
             id("rg-app", "nic-web-02"),
+            EdgeKind::Association,
+            "attached",
+        ),
+        // Mirrors Azure's managedBy: a data disk attached to its VM.
+        (
+            id("rg-app", "vm-web-01"),
+            id("rg-app", "disk-web-01-data"),
             EdgeKind::Association,
             "attached",
         ),
