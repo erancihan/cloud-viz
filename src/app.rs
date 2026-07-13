@@ -552,5 +552,9 @@ fn apply_visuals(ctx: &Context, theme: &Theme) {
     visuals.window_fill = c32(theme.surface);
     visuals.override_text_color = Some(c32(theme.ink));
     visuals.selection.bg_fill = c32a(theme.accent, 70);
+    // Flat by design: kill egui's default drop shadows so dropdown menus and
+    // tooltips don't cast a soft "box shadow" over the canvas.
+    visuals.window_shadow = egui::Shadow::NONE;
+    visuals.popup_shadow = egui::Shadow::NONE;
     ctx.set_visuals(visuals);
 }
