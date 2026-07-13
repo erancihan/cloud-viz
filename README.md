@@ -41,7 +41,7 @@ cargo run -- --export-svg topo.svg --provider azure      # your live estate
   vnets ▸ subnets — plus relationship edges (VM → NIC → subnet, NIC → public
   IP) as relaxed bezier curves with generous spacing.
 - Pan (drag), zoom (scroll, cursor-anchored), fit-to-view, clickable minimap,
-  light/dark themes, details panel per resource.
+  light/dark themes, fullscreen (F11), details panel per resource.
 - Degrades gracefully: CLI missing → install guidance; signed out →
   `az login` guidance; individual enrichment listings failing → warning badge,
   not a broken screen.
