@@ -494,6 +494,7 @@ fn draw_card(
             let icon_color = match att.kind.as_str() {
                 "public ip" => c32(theme.category_color(ResourceCategory::Network)),
                 "ssh key" => c32(theme.category_color(ResourceCategory::Security)),
+                "restore point" => c32(theme.category_color(ResourceCategory::Compute)),
                 _ => c32(theme.ink_3),
             };
             glyphs::draw_attachment(painter, icon, &att.kind, icon_color);

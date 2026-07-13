@@ -234,6 +234,12 @@ pub fn draw_attachment(painter: &Painter, rect: Rect, kind: &str, color: Color32
             }));
             painter.add(line(&[(2.6, 8.0), (13.4, 8.0)]));
         }
+        // Clock for restore points (point-in-time backups).
+        "restore point" => {
+            painter.add(Shape::circle_stroke(p(8.0, 8.0), 5.5 * s, stroke));
+            painter.add(line(&[(8.0, 8.0), (8.0, 4.4)]));
+            painter.add(line(&[(8.0, 8.0), (10.8, 9.4)]));
+        }
         // Key: ring head, shaft, two teeth.
         "ssh key" => {
             painter.add(Shape::circle_stroke(p(4.8, 8.0), 2.4 * s, stroke));

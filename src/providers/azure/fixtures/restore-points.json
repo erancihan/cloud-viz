@@ -1,0 +1,9 @@
+[
+  {
+    "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-app/providers/Microsoft.Compute/restorePointCollections/rpc-vm-web-01",
+    "source": {
+      "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/RG-APP/providers/Microsoft.Compute/virtualMachines/vm-web-01",
+      "location": "westeurope"
+    }
+  }
+]

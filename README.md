@@ -51,16 +51,17 @@ cargo run -- --export-svg topo.svg --provider azure      # your live estate
   subscription is already in the toolbar).
 - Folds subsidiary resources into their owner's card instead of drawing
   them as nodes: attached managed disks (via ARM's `managedBy`), NICs, VM
-  extensions, deployment slots, SSH keys, and public IPs render as icon
-  rows on the owner's card, with the full list also in the details panel.
-  Hardware rows come first; credentials/reachability (SSH keys with a red
-  key glyph, public IPs with a green globe) sit below their own separator,
-  with a link icon when shared across nodes (an SSH key on several VMs).
-  Unused keys, unattached disks and IPs, and always-standalone service
-  resources (network watchers, VM restore point collections) stay visible,
-  gathered into dashed "Detached …" boxes (styled like a virtual network)
-  instead of scattering across the canvas. Remaining relationships
-  (NSG → subnet/VM, app → db, …) route as relaxed beziers.
+  extensions, deployment slots, SSH keys, public IPs, and VM restore point
+  collections (via each collection's `source.id`, read per-RG) render as
+  icon rows on the owner's card, with the full list also in the details
+  panel. Hardware rows come first; credentials / reachability / backups (SSH
+  keys, public IPs, restore points) sit below their own separator, colored
+  by category, with a link icon when shared across nodes (an SSH key on
+  several VMs). Unused keys, unattached disks and IPs stay visible in dashed
+  "Detached …" boxes; regional services (network watchers) group under a
+  "Regional" box instead — both styled like a virtual network so they don't
+  scatter. Remaining relationships (NSG → subnet/VM, app → db, …) route as
+  relaxed beziers.
 - Pan (drag), zoom (scroll, cursor-anchored), fit-to-view, clickable minimap,
   light/dark themes, fullscreen (F11), details panel per resource.
 - Degrades gracefully: CLI missing → install guidance; signed out →

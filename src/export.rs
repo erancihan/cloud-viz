@@ -292,6 +292,7 @@ pub fn to_svg(topology: &Topology, theme: &Theme) -> String {
                 let icon_color = match att.kind.as_str() {
                     "public ip" => theme.category_color(ResourceCategory::Network),
                     "ssh key" => theme.category_color(ResourceCategory::Security),
+                    "restore point" => theme.category_color(ResourceCategory::Compute),
                     _ => theme.ink_3,
                 };
                 // 16-grid glyph scaled to 11px, centered on (x=27, cy).
@@ -378,6 +379,11 @@ fn attachment_glyph_svg(kind: &str, color: Rgb) -> String {
             r#"<circle cx="8" cy="8" r="5.4"/>"#,
             r#"<ellipse cx="8" cy="8" rx="2.4" ry="5.4"/>"#,
             r#"<path d="M2.6 8h10.8"/>"#
+        )
+        .to_string(),
+        "restore point" => concat!(
+            r#"<circle cx="8" cy="8" r="5.5"/>"#,
+            r#"<path d="M8 8V4.4M8 8l2.8 1.4"/>"#
         )
         .to_string(),
         "ssh key" => concat!(
