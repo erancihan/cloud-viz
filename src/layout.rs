@@ -18,31 +18,38 @@ pub const LEAF_W: f32 = 240.0;
 /// Height of a card's head (name / kind / group lines). Cards with
 /// attachments grow below this by one `ATTACH_ROW` per visible row.
 pub const LEAF_H: f32 = 76.0;
-/// Pitch of one attachment sub-card (card height + gap).
-pub const ATTACH_ROW: f32 = 26.0;
+/// Pitch of one attachment row.
+pub const ATTACH_ROW: f32 = 21.0;
 pub const ATTACH_PAD: f32 = 7.0;
-/// Cap on attachment rows painted on a card; extras collapse into a final
-/// "+N more" row so a disk-heavy VM can't dwarf the diagram.
-pub const MAX_ATTACH_ROWS: usize = 4;
+/// Extra space for the separator between plain and shared attachment rows.
+pub const ATTACH_SPLIT: f32 = 9.0;
 pub const GAP: f32 = 36.0;
 pub const PAD: f32 = 28.0;
 pub const HEADER: f32 = 52.0;
 const EMPTY_W: f32 = 280.0;
 const EMPTY_H: f32 = 116.0;
 
-/// Number of attachment rows a card actually paints.
-pub fn attachment_rows(count: usize) -> usize {
-    count.min(MAX_ATTACH_ROWS)
+/// Index of the first shared attachment when the card needs a separator
+/// between the plain rows and the shared rows below them (attachments are
+/// ordered shared-last by the mappers). `None` when either group is empty.
+pub fn shared_split_index(attachments: &[crate::model::Attachment]) -> Option<usize> {
+    let first_shared = attachments.iter().position(|a| a.shared)?;
+    (first_shared > 0).then_some(first_shared)
 }
 
-/// Leaf card height: the fixed head plus the attachment rows, if any.
+/// Leaf card height: the fixed head plus one row per attachment (all of
+/// them — no cap), plus the group separator when both kinds are present.
 pub fn leaf_height(node: &TopologyNode) -> f32 {
-    let rows = attachment_rows(node.attachments.len());
-    if rows == 0 {
-        LEAF_H
-    } else {
-        LEAF_H + ATTACH_PAD * 2.0 + rows as f32 * ATTACH_ROW
+    let n = node.attachments.len();
+    if n == 0 {
+        return LEAF_H;
     }
+    let split = if shared_split_index(&node.attachments).is_some() {
+        ATTACH_SPLIT
+    } else {
+        0.0
+    };
+    LEAF_H + ATTACH_PAD * 2.0 + n as f32 * ATTACH_ROW + split
 }
 /// Wider-than-tall packing bias — screens are landscape.
 const ASPECT_BIAS: f32 = 2.1;

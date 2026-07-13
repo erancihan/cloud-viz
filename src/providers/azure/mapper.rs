@@ -419,10 +419,16 @@ pub fn build_topology(inv: AzureInventory) -> Topology {
         }
     }
 
-    // Hand each owner its folded-in subsidiaries, sorted for determinism.
+    // Hand each owner its folded-in subsidiaries, sorted for determinism
+    // with shared items last (they render below a separator on the card).
     for (owner, mut items) in folded {
         if let Some(&i) = index.get(&owner) {
-            items.sort();
+            items.sort_by(|a, b| {
+                a.shared
+                    .cmp(&b.shared)
+                    .then_with(|| a.kind.cmp(&b.kind))
+                    .then_with(|| a.name.cmp(&b.name))
+            });
             nodes[i].attachments.extend(items);
         }
     }
