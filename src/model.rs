@@ -81,15 +81,30 @@ pub struct TopologyNode {
     #[serde(default)]
     pub group: Option<String>,
     /// Subsidiary resources folded into this node instead of drawn as their
-    /// own nodes — e.g. a VM's attached managed disks and extensions. Pairs of
-    /// (short kind, name), like ("disk", "DataDisk_1"). Summarized on the
-    /// card, listed in full in the details panel.
+    /// own nodes — e.g. a VM's attached managed disks, extensions, or SSH
+    /// keys. Rendered as sub-cards on the owner's card and listed in full in
+    /// the details panel.
     #[serde(default)]
-    pub attachments: Vec<(String, String)>,
+    pub attachments: Vec<Attachment>,
     pub region: Option<String>,
     /// Provider-specific extras surfaced in the details panel (tags, sku…).
     /// Kept ordered so the panel is stable between refreshes.
     pub metadata: Vec<(String, String)>,
+}
+
+/// A subsidiary resource folded into its owner's card (see
+/// [`TopologyNode::attachments`]).
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct Attachment {
+    /// Short lowercase kind driving the row icon: "disk", "nic",
+    /// "extension", "slot", "ssh key".
+    pub kind: String,
+    pub name: String,
+    /// True when the same underlying resource is folded into other nodes as
+    /// well (e.g. an SSH key used by several VMs) — rendered with a link
+    /// badge on the sub-card's corner.
+    #[serde(default)]
+    pub shared: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

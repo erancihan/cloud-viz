@@ -479,20 +479,26 @@ impl CloudVizApp {
                         row("Region", region, false);
                     }
                     row("Type", &node.kind, true);
-                    // Folded-in subsidiaries (disks, NICs, extensions, slots),
-                    // grouped by kind in first-seen order.
+                    // Folded-in subsidiaries (disks, NICs, extensions, slots,
+                    // SSH keys), grouped by kind in first-seen order.
                     let mut kinds: Vec<&str> = Vec::new();
-                    for (kind, _) in &node.attachments {
-                        if !kinds.contains(&kind.as_str()) {
-                            kinds.push(kind);
+                    for att in &node.attachments {
+                        if !kinds.contains(&att.kind.as_str()) {
+                            kinds.push(&att.kind);
                         }
                     }
                     for kind in kinds {
-                        let names: Vec<&str> = node
+                        let names: Vec<String> = node
                             .attachments
                             .iter()
-                            .filter(|(k, _)| k == kind)
-                            .map(|(_, name)| name.as_str())
+                            .filter(|a| a.kind == kind)
+                            .map(|a| {
+                                if a.shared {
+                                    format!("{} (shared)", a.name)
+                                } else {
+                                    a.name.clone()
+                                }
+                            })
                             .collect();
                         row(
                             &format!("Attached {kind}s ({})", names.len()),

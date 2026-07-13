@@ -102,5 +102,29 @@
     "resourceGroup": "rg-app",
     "tags": null,
     "type": "Microsoft.Web/sites/slots"
+  },
+  {
+    "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-app/providers/Microsoft.Compute/virtualMachines/vm-web-02",
+    "location": "westeurope",
+    "name": "vm-web-02",
+    "resourceGroup": "rg-app",
+    "tags": null,
+    "type": "Microsoft.Compute/virtualMachines"
+  },
+  {
+    "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-app/providers/Microsoft.Compute/sshPublicKeys/key-admin",
+    "location": "westeurope",
+    "name": "key-admin",
+    "resourceGroup": "rg-app",
+    "tags": null,
+    "type": "Microsoft.Compute/sshPublicKeys"
+  },
+  {
+    "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-app/providers/Microsoft.Compute/sshPublicKeys/key-orphan",
+    "location": "westeurope",
+    "name": "key-orphan",
+    "resourceGroup": "rg-app",
+    "tags": null,
+    "type": "Microsoft.Compute/sshPublicKeys"
   }
 ]

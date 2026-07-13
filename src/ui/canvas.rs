@@ -451,8 +451,10 @@ fn draw_card(
         );
     }
 
-    // Attachment rows: a mini icon + name per folded-in subsidiary (disks,
-    // NICs, extensions, slots), capped with a "+N more" overflow row.
+    // Attachment sub-cards: one per folded-in subsidiary (disks, NICs,
+    // extensions, slots, SSH keys), capped with a "+N more" overflow row.
+    // Shared attachments (e.g. an SSH key used by several VMs) carry a link
+    // badge in the sub-card's top-right corner.
     if !node.attachments.is_empty() {
         use crate::layout::{attachment_rows, ATTACH_PAD, ATTACH_ROW, LEAF_H};
         let divider_y = rect.min.y + LEAF_H * zoom;
@@ -466,11 +468,12 @@ fn draw_card(
         let rows = attachment_rows(node.attachments.len());
         let overflow = node.attachments.len() > rows;
         for i in 0..rows {
-            let cy = rect.min.y + (LEAF_H + ATTACH_PAD + (i as f32 + 0.5) * ATTACH_ROW) * zoom;
+            let top = rect.min.y + (LEAF_H + ATTACH_PAD + i as f32 * ATTACH_ROW) * zoom;
+            let cy = top + (ATTACH_ROW - 4.0) / 2.0 * zoom;
             if overflow && i == rows - 1 {
                 let hidden = node.attachments.len() - (rows - 1);
                 painter.text(
-                    Pos2::new(rect.min.x + 38.0 * zoom, cy),
+                    Pos2::new(rect.min.x + 20.0 * zoom, cy),
                     Align2::LEFT_CENTER,
                     format!("+{hidden} more"),
                     sub_font.clone(),
@@ -478,21 +481,40 @@ fn draw_card(
                 );
                 break;
             }
-            let (kind, name) = &node.attachments[i];
+            let att = &node.attachments[i];
+            let sub = Rect::from_min_max(
+                Pos2::new(rect.min.x + 14.0 * zoom, top),
+                Pos2::new(rect.max.x - 10.0 * zoom, top + (ATTACH_ROW - 4.0) * zoom),
+            );
+            painter.rect_filled(sub, 5.0 * zoom, c32(theme.plane));
+            painter.rect_stroke(
+                sub,
+                5.0 * zoom,
+                Stroke::new(1.0, c32(theme.hairline)),
+                StrokeKind::Inside,
+            );
             let icon = Rect::from_center_size(
-                Pos2::new(rect.min.x + 27.0 * zoom, cy),
+                Pos2::new(sub.min.x + 13.0 * zoom, cy),
                 Vec2::splat(11.0 * zoom),
             );
-            glyphs::draw_attachment(painter, icon, kind, c32(theme.ink_3));
+            glyphs::draw_attachment(painter, icon, &att.kind, c32(theme.ink_3));
+            let badge_room = if att.shared { 18.0 * zoom } else { 6.0 * zoom };
             draw_truncated(
                 painter,
-                Pos2::new(rect.min.x + 38.0 * zoom, cy),
+                Pos2::new(sub.min.x + 24.0 * zoom, cy),
                 Align2::LEFT_CENTER,
-                name,
+                &att.name,
                 sub_font.clone(),
                 c32(theme.ink_2),
-                rect.max.x - 10.0 * zoom - (rect.min.x + 38.0 * zoom),
+                sub.max.x - badge_room - (sub.min.x + 24.0 * zoom),
             );
+            if att.shared {
+                let badge = Rect::from_center_size(
+                    Pos2::new(sub.max.x - 9.0 * zoom, sub.min.y + 7.0 * zoom),
+                    Vec2::splat(9.0 * zoom),
+                );
+                glyphs::draw_link(painter, badge, c32(theme.accent));
+            }
         }
     }
 }

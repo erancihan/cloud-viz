@@ -48,10 +48,12 @@ cargo run -- --export-svg topo.svg --provider azure      # your live estate
   instead of a container box (the subscription is already in the toolbar).
 - Folds subsidiary resources into their owner's card instead of drawing
   them as nodes: attached managed disks (via ARM's `managedBy`), NICs, VM
-  extensions, and deployment slots render as icon rows on the card itself
-  (disk / network / puzzle / layers glyphs, "+N more" past four), with the
-  full list in the details panel. Remaining relationships (VM → public IP,
-  NSG → subnet/VM, LB → IP, …) route as relaxed bezier curves.
+  extensions, deployment slots, and SSH keys render as sub-cards on the
+  owner's card (disk / network / puzzle / layers / key glyphs, "+N more"
+  past four), with the full list in the details panel. An SSH key used by
+  several VMs appears on each of them with a link badge in the sub-card's
+  corner; only unused keys stand alone. Remaining relationships
+  (VM → public IP, NSG → subnet/VM, LB → IP, …) route as relaxed beziers.
 - Pan (drag), zoom (scroll, cursor-anchored), fit-to-view, clickable minimap,
   light/dark themes, fullscreen (F11), details panel per resource.
 - Degrades gracefully: CLI missing → install guidance; signed out →
@@ -121,15 +123,19 @@ The provider then shows up in the toolbar dropdown automatically.
 
 `az account show` · `az account list` · `az group list` ·
 `az resource list` · `az network vnet list` · `az network nic list` ·
-`az webapp list`
-(all with `--output json --only-show-errors`; the last three are best-effort
-enrichment and only produce warnings when they fail).
+`az webapp list` · `az vm list` · `az sshkey list`
+(all with `--output json --only-show-errors`; everything after
+`az resource list` is best-effort enrichment and only produces warnings on
+failure).
 
 Associations come from fields in those responses: `managedBy` on
 `az resource list` (an attached managed disk points at its VM),
 `networkSecurityGroup` on subnets and NICs, the NIC's `virtualMachine` /
 `subnet` / `publicIPAddress` references, `appServicePlanId` on
-`az webapp list`, and child-resource ids (VM extensions, site slots).
+`az webapp list`, child-resource ids (VM extensions, site slots), and SSH
+key material matched between `az sshkey list` and each VM's osProfile
+(ARM copies the key text into the VM instead of referencing the key
+resource).
 
 ## Roadmap
 

@@ -274,6 +274,15 @@ pub fn demo_topology() -> Topology {
             Security,
             vec![],
         ),
+        // An SSH key no VM uses — only unattached keys stand alone.
+        leaf(
+            "rg-ops",
+            "key-legacy",
+            "Microsoft.Compute/sshPublicKeys",
+            "SSH public key",
+            Security,
+            vec![],
+        ),
         leaf(
             "rg-ops",
             "id-workload",
@@ -322,25 +331,35 @@ pub fn demo_topology() -> Topology {
         .collect();
 
     // Folded-in subsidiaries, as the Azure mapper produces them: disks,
-    // extensions, and NICs ride on their VM's card; slots on their site's.
-    let mut attach = |name: &str, items: &[(&str, &str)]| {
+    // extensions, NICs, and SSH keys ride on their VM's card; slots on their
+    // site's. `ssh-admin` is used by both VMs, so it carries the shared/link
+    // badge and has no standalone card.
+    let mut attach = |name: &str, items: &[(&str, &str, bool)]| {
         if let Some(node) = nodes.iter_mut().find(|n| n.name == name) {
             node.attachments = items
                 .iter()
-                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .map(|&(kind, name, shared)| Attachment {
+                    kind: kind.to_string(),
+                    name: name.to_string(),
+                    shared,
+                })
                 .collect();
         }
     };
     attach(
         "vm-web-01",
         &[
-            ("disk", "disk-web-01-data"),
-            ("extension", "AADSSHLoginForLinux"),
-            ("nic", "nic-web-01"),
+            ("disk", "disk-web-01-data", false),
+            ("extension", "AADSSHLoginForLinux", false),
+            ("nic", "nic-web-01", false),
+            ("ssh key", "ssh-admin", true),
         ],
     );
-    attach("vm-web-02", &[("nic", "nic-web-02")]);
-    attach("app-portal", &[("slot", "staging")]);
+    attach(
+        "vm-web-02",
+        &[("nic", "nic-web-02", false), ("ssh key", "ssh-admin", true)],
+    );
+    attach("app-portal", &[("slot", "staging", false)]);
 
     // Only dependency edges remain; subnet, vnet, and plan membership is
     // shown by containment, and NICs/disks/extensions/slots by attachments.
@@ -461,9 +480,22 @@ mod tests {
         for vm in ["vm-web-01", "vm-web-02"] {
             assert_eq!(by_name(vm).parent_id.as_deref(), Some(snet_web.id.as_str()));
         }
-        // NIC/disk/extension ride on the VM card, not as nodes.
+        // NIC/disk/extension/ssh key ride on the VM card, not as nodes.
         assert!(!t.nodes.iter().any(|n| n.name.starts_with("nic-web")));
-        assert_eq!(by_name("vm-web-01").attachments.len(), 3);
+        assert_eq!(by_name("vm-web-01").attachments.len(), 4);
+        // The shared SSH key is flagged on both VMs and has no node; the
+        // unused key keeps its standalone card.
+        for vm in ["vm-web-01", "vm-web-02"] {
+            let key = by_name(vm)
+                .attachments
+                .iter()
+                .find(|a| a.kind == "ssh key")
+                .unwrap();
+            assert_eq!(key.name, "ssh-admin");
+            assert!(key.shared);
+        }
+        assert!(!t.nodes.iter().any(|n| n.name == "ssh-admin"));
+        assert!(t.nodes.iter().any(|n| n.name == "key-legacy"));
         // subnets nest inside the vnet
         let vnet = by_name("vnet-hub");
         assert!(vnet.container);
@@ -482,7 +514,11 @@ mod tests {
         );
         assert_eq!(
             by_name("app-portal").attachments,
-            vec![("slot".to_string(), "staging".to_string())]
+            vec![Attachment {
+                kind: "slot".into(),
+                name: "staging".into(),
+                shared: false,
+            }]
         );
     }
 
