@@ -398,6 +398,15 @@ fn force_layout(
         );
     }
 
+    // Horizontal alignment (fCoSE-style constraint): every virtual network
+    // shares one horizontal line. Constraining only y — projected each step so
+    // the whole system settles *with* the constraint — keeps each vnet near
+    // its connected cards (short edges) while x stays force-driven.
+    let vnets: Vec<usize> = (0..n)
+        .filter(|&i| nodes[roots[i].node_index].kind == "Microsoft.Network/virtualNetworks")
+        .collect();
+    let align = vnets.len() >= 2;
+
     let iters = 500;
     let temp0 = k * 1.2;
     for it in 0..iters {
@@ -452,40 +461,21 @@ fn force_layout(
                 pos[i].1 = (pos[i].1 + dy / d * step).clamp(-bound, bound);
             }
         }
+        // Project every vnet onto their shared horizontal line (mean y).
+        if align {
+            let mean_y = vnets.iter().map(|&i| pos[i].1).sum::<f32>() / vnets.len() as f32;
+            for &i in &vnets {
+                pos[i].1 = mean_y;
+            }
+        }
     }
 
-    // Horizontal alignment constraint (fCoSE-style): put every virtual network
-    // on one horizontal line, laid out left-to-right in their settled x order,
-    // then push everything else clear of that band with the vnets pinned.
-    let vnets: Vec<usize> = (0..n)
-        .filter(|&i| nodes[roots[i].node_index].kind == "Microsoft.Network/virtualNetworks")
-        .collect();
-    if vnets.len() >= 2 {
-        let center_y = vnets.iter().map(|&i| pos[i].1).sum::<f32>() / vnets.len() as f32;
-        let center_x = vnets.iter().map(|&i| pos[i].0).sum::<f32>() / vnets.len() as f32;
-        let mut order = vnets.clone();
-        order.sort_by(|&a, &b| {
-            pos[a]
-                .0
-                .partial_cmp(&pos[b].0)
-                .unwrap_or(std::cmp::Ordering::Equal)
-                .then_with(|| {
-                    nodes[roots[a].node_index]
-                        .id
-                        .cmp(&nodes[roots[b].node_index].id)
-                })
-        });
-        let total_w: f32 =
-            order.iter().map(|&i| sizes[i].0).sum::<f32>() + GAP * (order.len() as f32 - 1.0);
-        let mut cursor = center_x - total_w / 2.0;
-        for &i in &order {
-            pos[i] = (cursor + sizes[i].0 / 2.0, center_y);
-            cursor += sizes[i].0 + GAP;
-        }
-        separate(&mut pos, &sizes, GAP, &vnets.into_iter().collect());
+    let fixed: HashSet<usize> = if align {
+        vnets.iter().copied().collect()
     } else {
-        separate(&mut pos, &sizes, GAP, &HashSet::new());
-    }
+        HashSet::new()
+    };
+    separate(&mut pos, &sizes, GAP, &fixed);
 
     pos.iter()
         .zip(&sizes)
@@ -494,9 +484,10 @@ fn force_layout(
 }
 
 /// Push overlapping boxes apart (centers in `pos`, sizes in `sizes`) until each
-/// pair clears `gap` on at least one axis. Boxes in `fixed` never move — a
-/// conflicting non-fixed box absorbs the whole correction — which keeps the
-/// aligned virtual-network row intact. Deterministic; converges within budget.
+/// pair clears `gap` on at least one axis. `fixed` holds the aligned virtual
+/// networks: two of them only ever separate horizontally (staying on their
+/// shared line), and a fixed/free collision is absorbed entirely by the free
+/// box, so the vnets never leave the line. Deterministic; converges in budget.
 fn separate(pos: &mut [(f32, f32)], sizes: &[(f32, f32)], gap: f32, fixed: &HashSet<usize>) {
     let n = pos.len();
     for _ in 0..600 {
@@ -512,26 +503,30 @@ fn separate(pos: &mut [(f32, f32)], sizes: &[(f32, f32)], gap: f32, fixed: &Hash
                 if ox <= 0.0 || oy <= 0.0 {
                     continue;
                 }
-                // Split the correction, unless one side is pinned.
                 let (fi, fj) = (fixed.contains(&i), fixed.contains(&j));
                 if fi && fj {
-                    continue; // both pinned — the vnet row is already clean
-                }
-                let (si, sj) = if fi {
-                    (0.0, 1.0)
-                } else if fj {
-                    (1.0, 0.0)
-                } else {
-                    (0.5, 0.5)
-                };
-                if ox <= oy {
+                    // Two aligned vnets: shove apart in x only, keep the line.
                     let dir = if dx >= 0.0 { 1.0 } else { -1.0 };
-                    pos[i].0 -= ox * si * dir;
-                    pos[j].0 += ox * sj * dir;
+                    pos[i].0 -= ox / 2.0 * dir;
+                    pos[j].0 += ox / 2.0 * dir;
                 } else {
-                    let dir = if dy >= 0.0 { 1.0 } else { -1.0 };
-                    pos[i].1 -= oy * si * dir;
-                    pos[j].1 += oy * sj * dir;
+                    // Split the correction, unless one side is pinned.
+                    let (si, sj) = if fi {
+                        (0.0, 1.0)
+                    } else if fj {
+                        (1.0, 0.0)
+                    } else {
+                        (0.5, 0.5)
+                    };
+                    if ox <= oy {
+                        let dir = if dx >= 0.0 { 1.0 } else { -1.0 };
+                        pos[i].0 -= ox * si * dir;
+                        pos[j].0 += ox * sj * dir;
+                    } else {
+                        let dir = if dy >= 0.0 { 1.0 } else { -1.0 };
+                        pos[i].1 -= oy * si * dir;
+                        pos[j].1 += oy * sj * dir;
+                    }
                 }
                 moved = true;
             }
@@ -614,6 +609,76 @@ mod tests {
                 }
             }
         }
+    }
+
+    fn tnode(id: &str, kind: &str, parent: Option<&str>, container: bool) -> TopologyNode {
+        TopologyNode {
+            id: id.into(),
+            name: id.into(),
+            kind: kind.into(),
+            kind_label: kind.into(),
+            category: crate::model::ResourceCategory::Network,
+            parent_id: parent.map(str::to_string),
+            container,
+            group: None,
+            attachments: Vec::new(),
+            region: None,
+            metadata: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn connected_cards_cluster_near_their_vnet_despite_alignment() {
+        // Regression for long edges: with the vnet-alignment constraint on,
+        // a card connected to a resource *inside* a vnet must still settle
+        // near that vnet, not get stranded across the diagram.
+        use crate::model::{EdgeKind, Topology, TopologyEdge};
+        const VNET: &str = "Microsoft.Network/virtualNetworks";
+        let mut nodes = vec![
+            tnode("vnet-a", VNET, None, true),
+            tnode("snet-a", "sub", Some("vnet-a"), true),
+            tnode("res-a", "res", Some("snet-a"), false),
+            tnode("vnet-b", VNET, None, true),
+            tnode("snet-b", "sub", Some("vnet-b"), true),
+            tnode("res-b", "res", Some("snet-b"), false),
+        ];
+        let mut edges = Vec::new();
+        for (side, res) in [("a", "res-a"), ("b", "res-b")] {
+            for i in 0..10 {
+                let id = format!("ext-{side}-{i}");
+                nodes.push(tnode(&id, "res", None, false));
+                edges.push(TopologyEdge {
+                    id: format!("e-{side}-{i}"),
+                    source: id,
+                    target: res.into(),
+                    kind: EdgeKind::Association,
+                    label: None,
+                });
+            }
+        }
+        let topo = Topology {
+            provider: "t".into(),
+            scope_id: "t".into(),
+            scope_label: "t".into(),
+            nodes,
+            edges,
+            warnings: Vec::new(),
+        };
+        let layout = layout_topology(&topo);
+        let center = |id: &str| {
+            let p = &layout.placed[layout.by_id[id]];
+            (p.rect.x + p.rect.w / 2.0, p.rect.y + p.rect.h / 2.0)
+        };
+        let dist =
+            |a: (f32, f32), b: (f32, f32)| ((a.0 - b.0).powi(2) + (a.1 - b.1).powi(2)).sqrt();
+        let (ca, cb) = (center("vnet-a"), center("vnet-b"));
+        for i in 0..10 {
+            let ea = center(&format!("ext-a-{i}"));
+            assert!(dist(ea, ca) < dist(ea, cb), "ext-a-{i} drifted to vnet-b");
+            let eb = center(&format!("ext-b-{i}"));
+            assert!(dist(eb, cb) < dist(eb, ca), "ext-b-{i} drifted to vnet-a");
+        }
+        assert!((ca.1 - cb.1).abs() < 0.5, "vnets not aligned");
     }
 
     #[test]
