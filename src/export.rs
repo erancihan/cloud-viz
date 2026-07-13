@@ -4,7 +4,9 @@
 //! infrastructure snapshots.
 
 use crate::geom::{label_t, route_edge};
-use crate::layout::{attachment_rows, layout_topology, Rect, ATTACH_PAD, ATTACH_ROW, LEAF_H};
+use crate::layout::{
+    layout_topology, shared_split_index, Rect, ATTACH_PAD, ATTACH_ROW, ATTACH_SPLIT, LEAF_H,
+};
 use crate::model::{EdgeKind, ResourceCategory, Topology};
 use crate::theme::{mix, Rgb, Theme};
 use std::fmt::Write;
@@ -249,8 +251,9 @@ pub fn to_svg(topology: &Topology, theme: &Theme) -> String {
             );
         }
 
-        // Attachment sub-cards below the head, with a "+N more" overflow row
-        // and a link badge on shared attachments (mirrors ui/canvas.rs).
+        // Attachment rows below the head: mini icon + name each, shared
+        // items below their own separator with a link icon on the right
+        // (mirrors ui/canvas.rs).
         if !node.attachments.is_empty() {
             let _ = write!(
                 svg,
@@ -261,39 +264,33 @@ pub fn to_svg(topology: &Topology, theme: &Theme) -> String {
                 r.y + LEAF_H,
                 theme.hairline.hex()
             );
-            let rows = attachment_rows(node.attachments.len());
-            let overflow = node.attachments.len() > rows;
-            for i in 0..rows {
-                let top = r.y + LEAF_H + ATTACH_PAD + i as f32 * ATTACH_ROW;
-                let cy = top + (ATTACH_ROW - 4.0) / 2.0;
-                if overflow && i == rows - 1 {
-                    let hidden = node.attachments.len() - (rows - 1);
-                    let _ = write!(
-                        svg,
-                        r#"<text x="{:.1}" y="{:.1}" font-size="10.5" fill="{}">+{hidden} more</text>"#,
-                        r.x + 20.0,
-                        cy + 3.5,
-                        theme.ink_3.hex()
-                    );
-                    break;
+            let split = shared_split_index(&node.attachments);
+            for (i, att) in node.attachments.iter().enumerate() {
+                let mut offset = LEAF_H + ATTACH_PAD + (i as f32 + 0.5) * ATTACH_ROW;
+                if let Some(s) = split {
+                    if i >= s {
+                        offset += ATTACH_SPLIT;
+                    }
+                    if i == s {
+                        let sep_y =
+                            r.y + LEAF_H + ATTACH_PAD + s as f32 * ATTACH_ROW + ATTACH_SPLIT / 2.0;
+                        let _ = write!(
+                            svg,
+                            r#"<line x1="{:.1}" y1="{:.1}" x2="{:.1}" y2="{:.1}" stroke="{}" stroke-width="1"/>"#,
+                            r.x + 20.0,
+                            sep_y,
+                            r.right() - 20.0,
+                            sep_y,
+                            theme.hairline.hex()
+                        );
+                    }
                 }
-                let att = &node.attachments[i];
-                let (sub_x, sub_right) = (r.x + 14.0, r.right() - 10.0);
-                let _ = write!(
-                    svg,
-                    r#"<rect x="{:.1}" y="{:.1}" width="{:.1}" height="{:.1}" rx="5" fill="{}" stroke="{}" stroke-width="1"/>"#,
-                    sub_x,
-                    top,
-                    sub_right - sub_x,
-                    ATTACH_ROW - 4.0,
-                    theme.plane.hex(),
-                    theme.hairline.hex()
-                );
-                // 16-grid glyph scaled to 11px, centered on (sub_x+13, cy).
+                let cy = r.y + offset;
+                // 16-grid glyph scaled to 11px, centered on (x=27, cy).
                 let _ = write!(
                     svg,
                     r#"<g transform="translate({:.1},{:.1}) scale(0.6875)" stroke="{}" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round">{}</g>"#,
-                    sub_x + 13.0 - 5.5,
+                    r.x + 27.0 - 5.5,
                     cy - 5.5,
                     theme.ink_3.hex(),
                     attachment_glyph_svg(&att.kind, theme.ink_3)
@@ -301,7 +298,7 @@ pub fn to_svg(topology: &Topology, theme: &Theme) -> String {
                 let _ = write!(
                     svg,
                     r#"<text x="{:.1}" y="{:.1}" font-size="10.5" fill="{}">{}</text>"#,
-                    sub_x + 24.0,
+                    r.x + 38.0,
                     cy + 3.5,
                     theme.ink_2.hex(),
                     escape(&truncate(&att.name, if att.shared { 20 } else { 24 }))
@@ -309,9 +306,9 @@ pub fn to_svg(topology: &Topology, theme: &Theme) -> String {
                 if att.shared {
                     let _ = write!(
                         svg,
-                        r#"<g transform="translate({:.1},{:.1}) scale(0.5625)" stroke="{}" stroke-width="1.6" fill="none" stroke-linecap="round">{}</g>"#,
-                        sub_right - 9.0 - 4.5,
-                        top + 7.0 - 4.5,
+                        r#"<g transform="translate({:.1},{:.1}) scale(0.625)" stroke="{}" stroke-width="1.6" fill="none" stroke-linecap="round">{}</g>"#,
+                        r.right() - 16.0 - 5.0,
+                        cy - 5.0,
                         theme.accent.hex(),
                         link_glyph_svg()
                     );
