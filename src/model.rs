@@ -142,6 +142,59 @@ pub struct Topology {
     pub warnings: Vec<String>,
 }
 
+/// Presentation post-pass shared by all providers: gather detached leaves of
+/// well-known kinds into dashed "Detached …" container boxes (styled like a
+/// virtual network) so they don't scatter across the canvas. Only kinds
+/// whose attached instances fold into owner cards are grouped — a top-level
+/// card of these kinds remaining after mapping is genuinely unused.
+pub fn group_detached(topology: &mut Topology) {
+    const GROUPS: &[(&str, &str, ResourceCategory)] = &[
+        (
+            "SSH public key",
+            "SSH public keys",
+            ResourceCategory::Security,
+        ),
+        ("Managed disk", "Managed disks", ResourceCategory::Compute),
+        (
+            "Public IP address",
+            "Public IP addresses",
+            ResourceCategory::Network,
+        ),
+    ];
+    for (kind_label, plural, category) in GROUPS {
+        let members: Vec<usize> = topology
+            .nodes
+            .iter()
+            .enumerate()
+            .filter(|(_, n)| n.parent_id.is_none() && !n.container && n.kind_label == *kind_label)
+            .map(|(i, _)| i)
+            .collect();
+        if members.is_empty() {
+            continue;
+        }
+        let id = format!(
+            "cloudviz:detached:{}",
+            kind_label.to_lowercase().replace(' ', "-")
+        );
+        for &i in &members {
+            topology.nodes[i].parent_id = Some(id.clone());
+        }
+        topology.nodes.push(TopologyNode {
+            id,
+            name: (*plural).to_string(),
+            kind: "cloudviz/detachedGroup".into(),
+            kind_label: "Detached".into(),
+            category: *category,
+            parent_id: None,
+            container: true,
+            group: None,
+            attachments: Vec::new(),
+            region: None,
+            metadata: Vec::new(),
+        });
+    }
+}
+
 /// A selectable fetch scope within a provider — an Azure subscription today,
 /// an AWS account/region pair later.
 #[derive(Debug, Clone)]
@@ -191,4 +244,69 @@ pub enum ProviderStatus {
         detail: Option<String>,
     },
     Failed(ProviderError),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn leaf(name: &str, kind_label: &str) -> TopologyNode {
+        TopologyNode {
+            id: format!("test:{name}"),
+            name: name.into(),
+            kind: format!("Test/{kind_label}"),
+            kind_label: kind_label.into(),
+            category: ResourceCategory::Other,
+            parent_id: None,
+            container: false,
+            group: None,
+            attachments: Vec::new(),
+            region: None,
+            metadata: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn group_detached_boxes_known_kinds_and_leaves_the_rest() {
+        let mut t = Topology {
+            provider: "test".into(),
+            scope_id: "test".into(),
+            scope_label: "test".into(),
+            nodes: vec![
+                leaf("key-a", "SSH public key"),
+                leaf("key-b", "SSH public key"),
+                leaf("disk-a", "Managed disk"),
+                leaf("vm-a", "Virtual machine"),
+            ],
+            edges: Vec::new(),
+            warnings: Vec::new(),
+        };
+        group_detached(&mut t);
+
+        // Two containers appear (keys + disks), none for public IPs or VMs.
+        let groups: Vec<&TopologyNode> = t
+            .nodes
+            .iter()
+            .filter(|n| n.kind == "cloudviz/detachedGroup")
+            .collect();
+        assert_eq!(groups.len(), 2);
+        assert!(groups.iter().all(|g| g.container));
+
+        let by_name = |name: &str| t.nodes.iter().find(|n| n.name == name).unwrap();
+        let key_group = by_name("SSH public keys");
+        assert_eq!(key_group.category, ResourceCategory::Security);
+        for key in ["key-a", "key-b"] {
+            assert_eq!(
+                by_name(key).parent_id.as_deref(),
+                Some(key_group.id.as_str())
+            );
+        }
+        let disk_group = by_name("Managed disks");
+        assert_eq!(
+            by_name("disk-a").parent_id.as_deref(),
+            Some(disk_group.id.as_str())
+        );
+        // Unrelated leaves stay top-level.
+        assert_eq!(by_name("vm-a").parent_id, None);
+    }
 }

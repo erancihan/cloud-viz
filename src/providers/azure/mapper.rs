@@ -568,14 +568,16 @@ pub fn build_topology(inv: AzureInventory) -> Topology {
         }
     }
 
-    Topology {
+    let mut topology = Topology {
         provider: "azure".into(),
         scope_id: inv.account.id.clone(),
         scope_label: inv.account.name.clone(),
         nodes,
         edges,
         warnings: inv.warnings,
-    }
+    };
+    crate::model::group_detached(&mut topology);
+    topology
 }
 
 fn tags_metadata(
@@ -732,9 +734,12 @@ mod tests {
                 ("ssh key", "key-admin"),
             ]
         );
-        // An unattached disk stays visible as its own node.
+        // An unattached disk stays visible, gathered in the detached box.
         let orphan = find(&t, "disk-orphan");
         assert!(orphan.attachments.is_empty());
+        let group = find(&t, "Managed disks");
+        assert!(group.container);
+        assert_eq!(orphan.parent_id.as_deref(), Some(group.id.as_str()));
     }
 
     #[test]
@@ -755,10 +760,15 @@ mod tests {
             assert!(key.shared, "{vm_name}'s key should be flagged shared");
         }
 
-        // A key no VM uses stays a standalone card, categorized as Security.
+        // A key no VM uses stays visible in the detached box, as Security.
         let orphan = find(&t, "key-orphan");
         assert_eq!(orphan.category, ResourceCategory::Security);
         assert_eq!(orphan.kind_label, "SSH public key");
+        let group = find(&t, "SSH public keys");
+        assert!(group.container);
+        assert_eq!(orphan.parent_id.as_deref(), Some(group.id.as_str()));
+        // Every fixture public IP is attached, so no detached IP box exists.
+        assert!(!t.nodes.iter().any(|n| n.name == "Public IP addresses"));
     }
 
     #[test]
