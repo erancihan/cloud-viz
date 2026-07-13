@@ -37,9 +37,11 @@ cargo run -- --export-svg topo.svg --provider azure      # your live estate
 - Fetches an Azure subscription's inventory through `az` (subscriptions,
   resource groups, all resources, virtual networks/subnets, NICs).
 - Normalizes it into a provider-agnostic topology graph.
-- Renders nested containment — subscription ▸ resource groups ▸ resources,
-  vnets ▸ subnets — plus relationship edges (VM → NIC → subnet, NIC → public
-  IP) as relaxed bezier curves with generous spacing.
+- Lays out resources by dependency: a compound spring embedder clusters
+  connected resources together, nests vnet ▸ subnet ▸ members, and shows the
+  resource group as card subtext instead of a container box (the subscription
+  is already in the toolbar). Relationship edges (VM → NIC, NIC → public IP,
+  app → plan, …) route as relaxed bezier curves.
 - Pan (drag), zoom (scroll, cursor-anchored), fit-to-view, clickable minimap,
   light/dark themes, fullscreen (F11), details panel per resource.
 - Degrades gracefully: CLI missing → install guidance; signed out →
@@ -63,7 +65,7 @@ src/
 │   │   ├── mapper.rs pure: az JSON → Topology        ← unit tested
 │   │   └── mod.rs    status / scopes / fetch orchestration
 │   └── demo.rs       bundled sample estate (Demo provider)
-├── layout.rs         nested shelf-packing, relaxed spacing ← unit tested
+├── layout.rs         shelf-packed containers + top-level spring embedder ← unit tested
 ├── geom.rs           bezier edge routing (side-facing anchors) ← unit tested
 ├── theme.rs          light/dark tokens + CVD-validated categorical palette
 ├── ui/canvas.rs      hand-painted canvas: containers, cards, edges,
@@ -93,15 +95,15 @@ The provider then shows up in the toolbar dropdown automatically.
 ## Design notes
 
 - **Relaxed by default**: spacing constants in `layout.rs` (36px between
-  cards, 28px padding, 120px between top-level groups) are deliberately
-  generous, and edges are wide-swinging beziers anchored to whichever node
-  side faces the other end — no tight right-angle routing. A layout test
-  enforces the minimum clearance.
+  cards, 28px padding) are deliberately generous, and edges are wide-swinging
+  beziers anchored to whichever node side faces the other end — no tight
+  right-angle routing. A layout test enforces the minimum clearance.
 - **Colors**: node categories use a fixed-order categorical palette validated
   for color-vision deficiency and per-theme contrast (separately stepped for
   light and dark). Identity is never color-alone — every node also carries a
   glyph and text labels, and edge kinds are dash-pattern-coded.
-- **Deterministic layout**: bottom-up shelf packing; the same subscription
+- **Deterministic layout**: containers shelf-pack bottom-up and the top level
+  runs a fixed-iteration, RNG-free spring embedder, so the same subscription
   always produces the same picture. Layout invariants (parents-before-children,
   containment, no overlap, minimum clearance) are unit-tested.
 

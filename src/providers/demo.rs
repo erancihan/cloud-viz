@@ -1,7 +1,8 @@
 //! Bundled sample topology — lets anyone explore the app without a cloud
 //! account. Shaped like a typical small Azure estate so it exercises every
-//! render path: nested containers (subscription > resource groups > vnet >
-//! subnets), every resource category, and cross-container edges.
+//! render path: the vnet ▸ subnet ▸ members nesting, resources grouped by
+//! dependency, resource-group names as card subtext, and every category and
+//! edge kind.
 
 use crate::model::*;
 use crate::providers::CloudProvider;
@@ -39,8 +40,10 @@ impl CloudProvider for DemoProvider {
 
 const SUB: &str = "demo:/subscriptions/contoso-prod";
 
-fn rg(name: &str) -> String {
-    format!("{SUB}/resourceGroups/{name}")
+/// Stable, unique id namespace per resource group. Resource groups no longer
+/// render as boxes, but keeping ids under their RG path keeps them unique.
+fn id(rg: &str, name: &str) -> String {
+    format!("{SUB}/resourcegroups/{rg}/{name}")
 }
 
 struct Def {
@@ -49,13 +52,18 @@ struct Def {
     kind: &'static str,
     kind_label: &'static str,
     category: ResourceCategory,
+    /// Containment parent: a subnet for network members, a vnet for subnets,
+    /// otherwise `None` (a free, dependency-placed resource).
     parent: Option<String>,
     container: bool,
+    /// Resource group name shown as card subtext.
+    group: Option<&'static str>,
     metadata: Vec<(&'static str, &'static str)>,
 }
 
+/// A free resource card, placed by its dependencies (no containment parent).
 fn leaf(
-    parent: &str,
+    rg: &'static str,
     name: &'static str,
     kind: &'static str,
     kind_label: &'static str,
@@ -63,13 +71,14 @@ fn leaf(
     metadata: Vec<(&'static str, &'static str)>,
 ) -> Def {
     Def {
-        id: format!("{parent}/{name}"),
+        id: id(rg, name),
         name,
         kind,
         kind_label,
         category,
-        parent: Some(parent.to_string()),
+        parent: None,
         container: false,
+        group: Some(rg),
         metadata,
     }
 }
@@ -77,86 +86,113 @@ fn leaf(
 pub fn demo_topology() -> Topology {
     use ResourceCategory::*;
 
-    let vnet = format!("{}/vnet-hub", rg("rg-network"));
+    let vnet = id("rg-network", "vnet-hub");
+    let snet_web = format!("{vnet}/snet-web");
+    let snet_app = format!("{vnet}/snet-app");
+    let snet_data = format!("{vnet}/snet-data");
 
     let mut defs: Vec<Def> = vec![
-        Def {
-            id: SUB.into(),
-            name: "Contoso — Production",
-            kind: "azure/subscription",
-            kind_label: "Subscription",
-            category: Scope,
-            parent: None,
-            container: true,
-            metadata: vec![("tenant", "contoso.com")],
-        },
+        // Virtual network — a top-level container holding its subnets.
         Def {
             id: vnet.clone(),
             name: "vnet-hub",
             kind: "Microsoft.Network/virtualNetworks",
             kind_label: "Virtual network",
             category: Network,
-            parent: Some(rg("rg-network")),
+            parent: None,
             container: true,
+            group: Some("rg-network"),
             metadata: vec![("addressSpace", "10.0.0.0/16")],
         },
     ];
 
-    for name in ["rg-network", "rg-app", "rg-data", "rg-ops"] {
-        defs.push(Def {
-            id: rg(name),
-            name: match name {
-                "rg-network" => "rg-network",
-                "rg-app" => "rg-app",
-                "rg-data" => "rg-data",
-                _ => "rg-ops",
-            },
-            kind: "azure/resourceGroup",
-            kind_label: "Resource group",
-            category: Group,
-            parent: Some(SUB.into()),
-            container: true,
-            metadata: vec![("region", "westeurope")],
-        });
-    }
-
-    for (name, prefix) in [
-        ("snet-web", "10.0.0.0/24"),
-        ("snet-app", "10.0.1.0/24"),
-        ("snet-data", "10.0.2.0/24"),
+    // Subnets — containers nested in the vnet, holding their members.
+    for (id, name, prefix) in [
+        (&snet_web, "snet-web", "10.0.0.0/24"),
+        (&snet_app, "snet-app", "10.0.1.0/24"),
+        (&snet_data, "snet-data", "10.0.2.0/24"),
     ] {
         defs.push(Def {
-            id: format!("{vnet}/{name}"),
-            name: match name {
-                "snet-web" => "snet-web",
-                "snet-app" => "snet-app",
-                _ => "snet-data",
-            },
+            id: id.clone(),
+            name,
             kind: "Microsoft.Network/virtualNetworks/subnets",
             kind_label: "Subnet",
             category: Network,
             parent: Some(vnet.clone()),
-            container: false,
+            container: true,
+            group: None,
             metadata: vec![("addressPrefix", prefix)],
         });
     }
 
-    let rg_network = rg("rg-network");
-    let rg_app = rg("rg-app");
-    let rg_data = rg("rg-data");
-    let rg_ops = rg("rg-ops");
+    // Network members live inside their subnet.
+    let member = |snet: &str,
+                  name: &'static str,
+                  kind: &'static str,
+                  kind_label: &'static str,
+                  metadata: Vec<(&'static str, &'static str)>|
+     -> Def {
+        Def {
+            id: id("rg-network", name),
+            name,
+            kind,
+            kind_label,
+            category: Network,
+            parent: Some(snet.to_string()),
+            container: false,
+            group: Some("rg-network"),
+            metadata,
+        }
+    };
 
     defs.extend([
-        leaf(
-            &rg_network,
+        member(
+            &snet_web,
             "nsg-web",
             "Microsoft.Network/networkSecurityGroups",
             "Network security group",
-            Network,
             vec![],
         ),
+        Def {
+            // NICs belong to rg-app but sit inside the web subnet.
+            id: id("rg-app", "nic-web-01"),
+            name: "nic-web-01",
+            kind: "Microsoft.Network/networkInterfaces",
+            kind_label: "Network interface",
+            category: Network,
+            parent: Some(snet_web.clone()),
+            container: false,
+            group: Some("rg-app"),
+            metadata: vec![("privateIp", "10.0.0.4")],
+        },
+        Def {
+            id: id("rg-app", "nic-web-02"),
+            name: "nic-web-02",
+            kind: "Microsoft.Network/networkInterfaces",
+            kind_label: "Network interface",
+            category: Network,
+            parent: Some(snet_web.clone()),
+            container: false,
+            group: Some("rg-app"),
+            metadata: vec![("privateIp", "10.0.0.5")],
+        },
+        Def {
+            id: id("rg-app", "aks-main"),
+            name: "aks-main",
+            kind: "Microsoft.ContainerService/managedClusters",
+            kind_label: "AKS cluster",
+            category: Containers,
+            parent: Some(snet_app.clone()),
+            container: false,
+            group: Some("rg-app"),
+            metadata: vec![("nodeCount", "3"), ("version", "1.31")],
+        },
+    ]);
+
+    // Free resources — positioned by their dependency edges.
+    defs.extend([
         leaf(
-            &rg_network,
+            "rg-network",
             "pip-gateway",
             "Microsoft.Network/publicIPAddresses",
             "Public IP address",
@@ -164,7 +200,7 @@ pub fn demo_topology() -> Topology {
             vec![("ipAddress", "20.86.14.7")],
         ),
         leaf(
-            &rg_network,
+            "rg-network",
             "lb-web",
             "Microsoft.Network/loadBalancers",
             "Load balancer",
@@ -172,7 +208,7 @@ pub fn demo_topology() -> Topology {
             vec![],
         ),
         leaf(
-            &rg_app,
+            "rg-app",
             "vm-web-01",
             "Microsoft.Compute/virtualMachines",
             "Virtual machine",
@@ -180,7 +216,7 @@ pub fn demo_topology() -> Topology {
             vec![("size", "Standard_D2s_v5"), ("os", "Ubuntu 24.04")],
         ),
         leaf(
-            &rg_app,
+            "rg-app",
             "vm-web-02",
             "Microsoft.Compute/virtualMachines",
             "Virtual machine",
@@ -188,23 +224,7 @@ pub fn demo_topology() -> Topology {
             vec![("size", "Standard_D2s_v5"), ("os", "Ubuntu 24.04")],
         ),
         leaf(
-            &rg_app,
-            "nic-web-01",
-            "Microsoft.Network/networkInterfaces",
-            "Network interface",
-            Network,
-            vec![("privateIp", "10.0.0.4")],
-        ),
-        leaf(
-            &rg_app,
-            "nic-web-02",
-            "Microsoft.Network/networkInterfaces",
-            "Network interface",
-            Network,
-            vec![("privateIp", "10.0.0.5")],
-        ),
-        leaf(
-            &rg_app,
+            "rg-app",
             "plan-portal",
             "Microsoft.Web/serverfarms",
             "App Service plan",
@@ -212,7 +232,7 @@ pub fn demo_topology() -> Topology {
             vec![("sku", "P1v3")],
         ),
         leaf(
-            &rg_app,
+            "rg-app",
             "app-portal",
             "Microsoft.Web/sites",
             "App Service",
@@ -220,15 +240,7 @@ pub fn demo_topology() -> Topology {
             vec![("host", "app-portal.azurewebsites.net")],
         ),
         leaf(
-            &rg_app,
-            "aks-main",
-            "Microsoft.ContainerService/managedClusters",
-            "AKS cluster",
-            Containers,
-            vec![("nodeCount", "3"), ("version", "1.31")],
-        ),
-        leaf(
-            &rg_app,
+            "rg-app",
             "acrcontoso",
             "Microsoft.ContainerRegistry/registries",
             "Container registry",
@@ -236,7 +248,7 @@ pub fn demo_topology() -> Topology {
             vec![],
         ),
         leaf(
-            &rg_data,
+            "rg-data",
             "sqlsrv-main",
             "Microsoft.Sql/servers",
             "SQL server",
@@ -244,7 +256,7 @@ pub fn demo_topology() -> Topology {
             vec![],
         ),
         leaf(
-            &rg_data,
+            "rg-data",
             "sqldb-orders",
             "Microsoft.Sql/servers/databases",
             "SQL database",
@@ -252,7 +264,7 @@ pub fn demo_topology() -> Topology {
             vec![("tier", "GP_Gen5_2")],
         ),
         leaf(
-            &rg_data,
+            "rg-data",
             "cosmos-catalog",
             "Microsoft.DocumentDB/databaseAccounts",
             "Cosmos DB account",
@@ -260,7 +272,7 @@ pub fn demo_topology() -> Topology {
             vec![],
         ),
         leaf(
-            &rg_data,
+            "rg-data",
             "redis-session",
             "Microsoft.Cache/redis",
             "Redis cache",
@@ -268,7 +280,7 @@ pub fn demo_topology() -> Topology {
             vec![],
         ),
         leaf(
-            &rg_data,
+            "rg-data",
             "stcontosoprod",
             "Microsoft.Storage/storageAccounts",
             "Storage account",
@@ -276,7 +288,7 @@ pub fn demo_topology() -> Topology {
             vec![("sku", "Standard_ZRS")],
         ),
         leaf(
-            &rg_ops,
+            "rg-ops",
             "kv-secrets",
             "Microsoft.KeyVault/vaults",
             "Key vault",
@@ -284,7 +296,7 @@ pub fn demo_topology() -> Topology {
             vec![],
         ),
         leaf(
-            &rg_ops,
+            "rg-ops",
             "id-workload",
             "Microsoft.ManagedIdentity/userAssignedIdentities",
             "Managed identity",
@@ -292,7 +304,7 @@ pub fn demo_topology() -> Topology {
             vec![],
         ),
         leaf(
-            &rg_ops,
+            "rg-ops",
             "sb-events",
             "Microsoft.ServiceBus/namespaces",
             "Service Bus namespace",
@@ -300,7 +312,7 @@ pub fn demo_topology() -> Topology {
             vec![],
         ),
         leaf(
-            &rg_ops,
+            "rg-ops",
             "log-contoso",
             "Microsoft.OperationalInsights/workspaces",
             "Log Analytics workspace",
@@ -319,7 +331,8 @@ pub fn demo_topology() -> Topology {
             category: d.category,
             parent_id: d.parent,
             container: d.container,
-            region: Some("westeurope".into()).filter(|_| d.category != Scope),
+            group: d.group.map(str::to_string),
+            region: Some("westeurope".into()),
             metadata: d
                 .metadata
                 .into_iter()
@@ -328,67 +341,41 @@ pub fn demo_topology() -> Topology {
         })
         .collect();
 
+    // Only dependency edges remain; subnet membership is shown by containment.
     let edge_defs: Vec<(String, String, EdgeKind, &str)> = vec![
-        // VM -> NIC -> subnet chains
         (
-            format!("{rg_app}/vm-web-01"),
-            format!("{rg_app}/nic-web-01"),
+            id("rg-app", "vm-web-01"),
+            id("rg-app", "nic-web-01"),
             EdgeKind::Association,
             "attached",
         ),
         (
-            format!("{rg_app}/vm-web-02"),
-            format!("{rg_app}/nic-web-02"),
+            id("rg-app", "vm-web-02"),
+            id("rg-app", "nic-web-02"),
             EdgeKind::Association,
             "attached",
         ),
         (
-            format!("{rg_app}/nic-web-01"),
-            format!("{vnet}/snet-web"),
-            EdgeKind::Network,
-            "in subnet",
-        ),
-        (
-            format!("{rg_app}/nic-web-02"),
-            format!("{vnet}/snet-web"),
-            EdgeKind::Network,
-            "in subnet",
-        ),
-        // network plumbing
-        (
-            format!("{rg_network}/nsg-web"),
-            format!("{vnet}/snet-web"),
-            EdgeKind::Network,
-            "protects",
-        ),
-        (
-            format!("{rg_network}/lb-web"),
-            format!("{rg_network}/pip-gateway"),
+            id("rg-network", "lb-web"),
+            id("rg-network", "pip-gateway"),
             EdgeKind::Association,
             "frontend",
         ),
         (
-            format!("{rg_app}/aks-main"),
-            format!("{vnet}/snet-app"),
-            EdgeKind::Network,
-            "in subnet",
-        ),
-        // app-tier associations
-        (
-            format!("{rg_app}/app-portal"),
-            format!("{rg_app}/plan-portal"),
+            id("rg-app", "app-portal"),
+            id("rg-app", "plan-portal"),
             EdgeKind::Association,
             "hosted on",
         ),
         (
-            format!("{rg_app}/aks-main"),
-            format!("{rg_app}/acrcontoso"),
+            id("rg-app", "aks-main"),
+            id("rg-app", "acrcontoso"),
             EdgeKind::Association,
             "pulls from",
         ),
         (
-            format!("{rg_data}/sqldb-orders"),
-            format!("{rg_data}/sqlsrv-main"),
+            id("rg-data", "sqldb-orders"),
+            id("rg-data", "sqlsrv-main"),
             EdgeKind::Association,
             "on server",
         ),
@@ -464,7 +451,40 @@ mod tests {
     }
 
     #[test]
-    fn demo_covers_every_category() {
+    fn subscription_and_resource_groups_are_not_nodes() {
+        let t = demo_topology();
+        assert!(
+            !t.nodes.iter().any(|n| matches!(
+                n.category,
+                ResourceCategory::Scope | ResourceCategory::Group
+            )),
+            "subscription/resource-group containers should no longer be nodes"
+        );
+        // Resource-group membership survives as card subtext instead.
+        let vm = t.nodes.iter().find(|n| n.name == "vm-web-01").unwrap();
+        assert_eq!(vm.group.as_deref(), Some("rg-app"));
+    }
+
+    #[test]
+    fn network_members_nest_under_their_subnet() {
+        let t = demo_topology();
+        let by_name = |name: &str| t.nodes.iter().find(|n| n.name == name).unwrap();
+        let snet_web = by_name("snet-web");
+        assert!(snet_web.container);
+        for nic in ["nic-web-01", "nic-web-02", "nsg-web"] {
+            assert_eq!(
+                by_name(nic).parent_id.as_deref(),
+                Some(snet_web.id.as_str())
+            );
+        }
+        // subnets nest inside the vnet
+        let vnet = by_name("vnet-hub");
+        assert!(vnet.container);
+        assert_eq!(snet_web.parent_id.as_deref(), Some(vnet.id.as_str()));
+    }
+
+    #[test]
+    fn demo_covers_every_leaf_category() {
         use ResourceCategory::*;
         let t = demo_topology();
         let present: HashSet<ResourceCategory> = t.nodes.iter().map(|n| n.category).collect();
@@ -478,8 +498,6 @@ mod tests {
             Integration,
             Web,
             Other,
-            Scope,
-            Group,
         ] {
             assert!(present.contains(&cat), "demo lacks category {cat:?}");
         }

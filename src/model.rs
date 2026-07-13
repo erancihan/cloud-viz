@@ -75,6 +75,9 @@ pub struct TopologyNode {
     pub parent_id: Option<String>,
     /// True when the node renders as a container box holding its children.
     pub container: bool,
+    /// Resource group / stack name, shown as card subtext. Purely
+    /// informational — resource groups are no longer drawn as container boxes.
+    pub group: Option<String>,
     pub region: Option<String>,
     /// Provider-specific extras surfaced in the details panel (tags, sku…).
     /// Kept ordered so the panel is stable between refreshes.
