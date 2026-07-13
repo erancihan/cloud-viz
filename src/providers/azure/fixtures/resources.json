@@ -150,5 +150,21 @@
     "resourceGroup": "MC_rg-app_aks-rex_eastus2",
     "tags": null,
     "type": "Microsoft.Network/publicIPAddresses"
+  },
+  {
+    "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/NetworkWatcherRG/providers/Microsoft.Network/networkWatchers/NetworkWatcher_westeurope",
+    "location": "westeurope",
+    "name": "NetworkWatcher_westeurope",
+    "resourceGroup": "NetworkWatcherRG",
+    "tags": null,
+    "type": "Microsoft.Network/networkWatchers"
+  },
+  {
+    "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-app/providers/Microsoft.Compute/restorePointCollections/rpc-vm-web-01",
+    "location": "westeurope",
+    "name": "rpc-vm-web-01",
+    "resourceGroup": "rg-app",
+    "tags": null,
+    "type": "Microsoft.Compute/restorePointCollections"
   }
 ]
