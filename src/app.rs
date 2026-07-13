@@ -45,6 +45,7 @@ pub struct CloudVizApp {
     selected: Option<usize>,
     theme: Theme,
     camera: Camera,
+    fullscreen: bool,
     tx: Sender<WorkerMsg>,
     rx: Receiver<WorkerMsg>,
     generation: u64,
@@ -67,6 +68,7 @@ impl CloudVizApp {
             selected: None,
             theme: theme::DARK,
             camera: Camera::default(),
+            fullscreen: false,
             tx,
             rx,
             generation: 0,
@@ -190,6 +192,16 @@ impl CloudVizApp {
         }
     }
 
+    /// Request real (borderless) fullscreen. Preferred over the OS maximize
+    /// button: under WSLg the compositor leaves the previous window's
+    /// client-side decorations — border and drop shadow — painted at their old
+    /// bounds when a window is merely maximized. True fullscreen has no
+    /// decorations, so nothing is left behind.
+    fn set_fullscreen(&mut self, ctx: &Context, on: bool) {
+        self.fullscreen = on;
+        ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(on));
+    }
+
     fn toolbar(&mut self, ui: &mut Ui, ctx: &Context) {
         ui.horizontal(|ui| {
             ui.add_space(4.0);
@@ -260,6 +272,14 @@ impl CloudVizApp {
             }
             if ui.button("Fit view").clicked() {
                 self.camera.needs_fit = true;
+            }
+            let fs_label = if self.fullscreen {
+                "Exit full screen"
+            } else {
+                "Full screen"
+            };
+            if ui.button(fs_label).on_hover_text("F11").clicked() {
+                self.set_fullscreen(ctx, !self.fullscreen);
             }
 
             ui.with_layout(EguiLayout::right_to_left(Align::Center), |ui| {
@@ -524,6 +544,15 @@ impl eframe::App for CloudVizApp {
     fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
         self.drain_worker_messages();
         apply_visuals(ctx, &self.theme);
+
+        // Keep our flag in sync with the real window state (fullscreen can also
+        // be left via the WM), then toggle on F11.
+        if let Some(fs) = ctx.input(|i| i.viewport().fullscreen) {
+            self.fullscreen = fs;
+        }
+        if ctx.input(|i| i.key_pressed(egui::Key::F11)) {
+            self.set_fullscreen(ctx, !self.fullscreen);
+        }
 
         egui::TopBottomPanel::top("toolbar")
             .exact_height(44.0)
