@@ -126,5 +126,29 @@
     "resourceGroup": "rg-app",
     "tags": null,
     "type": "Microsoft.Compute/sshPublicKeys"
+  },
+  {
+    "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-app/providers/Microsoft.ContainerService/managedClusters/aks-rex",
+    "location": "eastus2",
+    "name": "aks-rex",
+    "resourceGroup": "rg-app",
+    "tags": null,
+    "type": "Microsoft.ContainerService/managedClusters"
+  },
+  {
+    "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/MC_rg-app_aks-rex_eastus2/providers/Microsoft.Compute/virtualMachineScaleSets/aks-nodepool1-vmss",
+    "location": "eastus2",
+    "name": "aks-nodepool1-vmss",
+    "resourceGroup": "MC_rg-app_aks-rex_eastus2",
+    "tags": null,
+    "type": "Microsoft.Compute/virtualMachineScaleSets"
+  },
+  {
+    "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/MC_rg-app_aks-rex_eastus2/providers/Microsoft.Network/publicIPAddresses/kubernetes-lb-ip",
+    "location": "eastus2",
+    "name": "kubernetes-lb-ip",
+    "resourceGroup": "MC_rg-app_aks-rex_eastus2",
+    "tags": null,
+    "type": "Microsoft.Network/publicIPAddresses"
   }
 ]

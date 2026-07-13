@@ -88,7 +88,6 @@ pub fn demo_topology() -> Topology {
 
     let vnet = id("rg-network", "vnet-hub");
     let snet_web = format!("{vnet}/snet-web");
-    let snet_app = format!("{vnet}/snet-app");
     let snet_data = format!("{vnet}/snet-data");
 
     let mut defs: Vec<Def> = vec![
@@ -109,7 +108,6 @@ pub fn demo_topology() -> Topology {
     // Subnets — containers nested in the vnet, holding their members.
     for (id, name, prefix) in [
         (&snet_web, "snet-web", "10.0.0.0/24"),
-        (&snet_app, "snet-app", "10.0.1.0/24"),
         (&snet_data, "snet-data", "10.0.2.0/24"),
     ] {
         defs.push(Def {
@@ -126,8 +124,7 @@ pub fn demo_topology() -> Topology {
     }
 
     // Subnet members: VMs render inside the subnet their NIC lives in (the
-    // NIC itself rides on the VM's card, mirroring the Azure mapper), and
-    // AKS sits in its delegated subnet.
+    // NIC itself rides on the VM's card, mirroring the Azure mapper).
     defs.extend([
         Def {
             id: id("rg-app", "vm-web-01"),
@@ -151,16 +148,45 @@ pub fn demo_topology() -> Topology {
             group: Some("rg-app"),
             metadata: vec![("size", "Standard_D2s_v5"), ("os", "Ubuntu 24.04")],
         },
+    ]);
+
+    // AKS cluster — a container box holding its node resource group's managed
+    // infrastructure (VM scale set + load-balancer public IP), mirroring how
+    // the Azure mapper nests everything in `MC_<cluster>_<rg>_<region>`.
+    let aks = id("rg-app", "aks-main");
+    defs.extend([
         Def {
-            id: id("rg-app", "aks-main"),
+            id: aks.clone(),
             name: "aks-main",
             kind: "Microsoft.ContainerService/managedClusters",
             kind_label: "AKS cluster",
             category: Containers,
-            parent: Some(snet_app.clone()),
-            container: false,
+            parent: None,
+            container: true,
             group: Some("rg-app"),
             metadata: vec![("nodeCount", "3"), ("version", "1.31")],
+        },
+        Def {
+            id: format!("{aks}/vmss-nodes"),
+            name: "aks-nodepool1-vmss",
+            kind: "Microsoft.Compute/virtualMachineScaleSets",
+            kind_label: "VM scale set",
+            category: Compute,
+            parent: Some(aks.clone()),
+            container: false,
+            group: Some("MC_rg-app_aks-main_westeurope"),
+            metadata: vec![("capacity", "3"), ("sku", "Standard_D2s_v5")],
+        },
+        Def {
+            id: format!("{aks}/pip-lb"),
+            name: "kubernetes-lb",
+            kind: "Microsoft.Network/publicIPAddresses",
+            kind_label: "Public IP address",
+            category: Network,
+            parent: Some(aks.clone()),
+            container: false,
+            group: Some("MC_rg-app_aks-main_westeurope"),
+            metadata: vec![("ipAddress", "20.86.14.20")],
         },
     ]);
 
@@ -379,12 +405,6 @@ pub fn demo_topology() -> Topology {
             snet_web.clone(),
             EdgeKind::Network,
             "protects",
-        ),
-        (
-            id("rg-app", "aks-main"),
-            id("rg-app", "acrcontoso"),
-            EdgeKind::Association,
-            "pulls from",
         ),
         (
             id("rg-data", "sqldb-orders"),
