@@ -196,14 +196,6 @@ pub fn demo_topology() -> Topology {
     defs.extend([
         leaf(
             "rg-network",
-            "pip-gateway",
-            "Microsoft.Network/publicIPAddresses",
-            "Public IP address",
-            Network,
-            vec![("ipAddress", "20.86.14.7")],
-        ),
-        leaf(
-            "rg-network",
             "lb-web",
             "Microsoft.Network/loadBalancers",
             "Load balancer",
@@ -360,6 +352,8 @@ pub fn demo_topology() -> Topology {
         &[("nic", "nic-web-02", false), ("ssh key", "ssh-admin", true)],
     );
     attach("app-portal", &[("slot", "staging", false)]);
+    // The load balancer's frontend IP folds in like a VM's public IP would.
+    attach("lb-web", &[("public ip", "pip-gateway", false)]);
 
     // Only dependency edges remain; subnet, vnet, and plan membership is
     // shown by containment, and NICs/disks/extensions/slots by attachments.
@@ -369,12 +363,6 @@ pub fn demo_topology() -> Topology {
             snet_web.clone(),
             EdgeKind::Network,
             "protects",
-        ),
-        (
-            id("rg-network", "lb-web"),
-            id("rg-network", "pip-gateway"),
-            EdgeKind::Association,
-            "frontend",
         ),
         (
             id("rg-app", "aks-main"),

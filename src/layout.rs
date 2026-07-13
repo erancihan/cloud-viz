@@ -29,22 +29,23 @@ pub const HEADER: f32 = 52.0;
 const EMPTY_W: f32 = 280.0;
 const EMPTY_H: f32 = 116.0;
 
-/// Index of the first shared attachment when the card needs a separator
-/// between the plain rows and the shared rows below them (attachments are
-/// ordered shared-last by the mappers). `None` when either group is empty.
-pub fn shared_split_index(attachments: &[crate::model::Attachment]) -> Option<usize> {
-    let first_shared = attachments.iter().position(|a| a.shared)?;
-    (first_shared > 0).then_some(first_shared)
+/// Index of the first secondary attachment (SSH keys, public IPs) when the
+/// card needs a separator between the hardware rows and the secondary rows
+/// below them (attachments are ordered secondary-last by the mappers).
+/// `None` when either group is empty.
+pub fn secondary_split_index(attachments: &[crate::model::Attachment]) -> Option<usize> {
+    let first = attachments.iter().position(|a| a.secondary())?;
+    (first > 0).then_some(first)
 }
 
 /// Leaf card height: the fixed head plus one row per attachment (all of
-/// them — no cap), plus the group separator when both kinds are present.
+/// them — no cap), plus the group separator when both groups are present.
 pub fn leaf_height(node: &TopologyNode) -> f32 {
     let n = node.attachments.len();
     if n == 0 {
         return LEAF_H;
     }
-    let split = if shared_split_index(&node.attachments).is_some() {
+    let split = if secondary_split_index(&node.attachments).is_some() {
         ATTACH_SPLIT
     } else {
         0.0

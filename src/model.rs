@@ -107,6 +107,15 @@ pub struct Attachment {
     pub shared: bool,
 }
 
+impl Attachment {
+    /// Secondary attachments — credentials and reachability (SSH keys,
+    /// public IPs) — always render below their own separator on the card,
+    /// after the hardware rows (disks, NICs, extensions, slots).
+    pub fn secondary(&self) -> bool {
+        matches!(self.kind.as_str(), "ssh key" | "public ip")
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum EdgeKind {
     Association,
