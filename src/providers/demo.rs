@@ -266,7 +266,7 @@ pub fn demo_topology() -> Topology {
             Security,
             vec![],
         ),
-        // An SSH key no VM uses — only unattached keys stand alone.
+        // Unattached leftovers — these gather into dashed "Detached …" boxes.
         leaf(
             "rg-ops",
             "key-legacy",
@@ -274,6 +274,22 @@ pub fn demo_topology() -> Topology {
             "SSH public key",
             Security,
             vec![],
+        ),
+        leaf(
+            "rg-app",
+            "disk-decom",
+            "Microsoft.Compute/disks",
+            "Managed disk",
+            Compute,
+            vec![("sizeGb", "128"), ("sku", "Standard_LRS")],
+        ),
+        leaf(
+            "rg-network",
+            "pip-reserved",
+            "Microsoft.Network/publicIPAddresses",
+            "Public IP address",
+            Network,
+            vec![("ipAddress", "20.86.14.9")],
         ),
         leaf(
             "rg-ops",
@@ -390,14 +406,16 @@ pub fn demo_topology() -> Topology {
         })
         .collect();
 
-    Topology {
+    let mut topology = Topology {
         provider: "demo".into(),
         scope_id: "demo".into(),
         scope_label: "Contoso — Production (sample data)".into(),
         nodes,
         edges,
         warnings: Vec::new(),
-    }
+    };
+    group_detached(&mut topology);
+    topology
 }
 
 #[cfg(test)]
@@ -488,6 +506,22 @@ mod tests {
         let vnet = by_name("vnet-hub");
         assert!(vnet.container);
         assert_eq!(snet_web.parent_id.as_deref(), Some(vnet.id.as_str()));
+    }
+
+    #[test]
+    fn detached_leftovers_gather_into_boxes() {
+        let t = demo_topology();
+        let by_name = |name: &str| t.nodes.iter().find(|n| n.name == name).unwrap();
+        for (group, member) in [
+            ("SSH public keys", "key-legacy"),
+            ("Managed disks", "disk-decom"),
+            ("Public IP addresses", "pip-reserved"),
+        ] {
+            let g = by_name(group);
+            assert!(g.container, "{group} should be a container");
+            assert_eq!(g.kind_label, "Detached");
+            assert_eq!(by_name(member).parent_id.as_deref(), Some(g.id.as_str()));
+        }
     }
 
     #[test]
