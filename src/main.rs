@@ -43,24 +43,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Ok(());
     }
 
-    let mut viewport = eframe::egui::ViewportBuilder::default()
-        .with_title("CloudViz")
-        .with_inner_size([1440.0, 900.0])
-        .with_min_inner_size([960.0, 600.0]);
-
-    // Under WSLg the app runs as a Wayland client, and winit draws its own
-    // client-side decorations (border + drop shadow) on top of the native
-    // Windows title bar the compositor already provides. WSLg doesn't update
-    // that winit-drawn frame when the window is maximized, so the previous
-    // window's outline is left painted over the canvas. Dropping the redundant
-    // client-side decorations removes the artifact; Windows keeps drawing the
-    // real title bar for move / minimize / maximize / close.
-    if std::env::var_os("WSL_DISTRO_NAME").is_some() {
-        viewport = viewport.with_decorations(false);
-    }
-
     let options = eframe::NativeOptions {
-        viewport,
+        viewport: eframe::egui::ViewportBuilder::default()
+            .with_title("CloudViz")
+            .with_inner_size([1440.0, 900.0])
+            .with_min_inner_size([960.0, 600.0]),
         ..Default::default()
     };
     eframe::run_native(
