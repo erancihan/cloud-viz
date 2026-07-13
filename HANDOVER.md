@@ -134,12 +134,13 @@ When you touch `ui/canvas.rs` interaction code, run the app locally.
 ## 7. Known limitations / gaps
 
 - **Read-only.** No create/rename/tag/delete yet (deliberate; see roadmap).
-- **Edge coverage is moderate.** NIC-derived relationships (VM→NIC, NIC→public
-  IP, NIC nested into its subnet), ARM `managedBy` ownership (VM→managed
-  disk, …), and NSG→subnet/NIC associations — all read from the existing
-  listings. Still missing: load balancer backend wiring, private endpoints,
-  VNet peering, app→database links (candidates: `az vm list` storage/network
-  profiles, `az network lb list`, or Azure Resource Graph).
+- **Edge coverage is moderate.** NIC wiring re-anchors onto the VM (VM inside
+  its subnet, VM→public IP, NSG→VM), `managedBy` folds attached disks into
+  the VM card, extensions/slots fold into their parent, and `az webapp list`
+  nests App Services inside their plan. Still missing: load balancer backend
+  wiring, private endpoints, VNet peering, app→database links (candidates:
+  `az vm list` storage/network profiles, `az network lb list`, or Azure
+  Resource Graph).
 - **Azure is the only live provider.**
 - **No CI.** fmt/clippy/test are manual. First recommended task below.
 - **No PNG export, no saved snapshots / drift comparison.**

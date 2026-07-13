@@ -110,6 +110,8 @@ impl super::CloudProvider for AzureProvider {
             &with_scope(&["network", "nic", "list"], &scope_args),
             &mut warnings,
         );
+        let webapps: Vec<AzWebApp> =
+            self.try_list(&with_scope(&["webapp", "list"], &scope_args), &mut warnings);
 
         Ok(build_topology(AzureInventory {
             account,
@@ -117,6 +119,7 @@ impl super::CloudProvider for AzureProvider {
             resources,
             vnets,
             nics,
+            webapps,
             warnings,
         }))
     }

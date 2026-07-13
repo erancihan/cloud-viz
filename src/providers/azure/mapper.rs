@@ -11,6 +11,7 @@ pub struct AzureInventory {
     pub resources: Vec<AzResource>,
     pub vnets: Vec<AzVnet>,
     pub nics: Vec<AzNic>,
+    pub webapps: Vec<AzWebApp>,
     pub warnings: Vec<String>,
 }
 
@@ -184,11 +185,69 @@ pub fn build_topology(inv: AzureInventory) -> Topology {
         })
     };
 
+    // NIC → owning VM, from the nic listing. Used to fold NICs into their
+    // VM's card and to re-anchor NIC-derived edges/nesting onto the VM.
+    let nic_vm: HashMap<String, String> = inv
+        .nics
+        .iter()
+        .filter_map(|nic| {
+            let vm = nic.virtual_machine.as_ref()?.id.as_deref()?;
+            Some((norm(&nic.id), norm(vm)))
+        })
+        .collect();
+
+    // Subsidiary resources fold into their owner's card instead of standing
+    // as nodes: attached managed disks (`managedBy` → the VM), NICs wired to
+    // a VM, and child resources living under their owner's id (VM extensions,
+    // App Service deployment slots). Collected first so the node loop can
+    // skip them; applied once every owner exists.
+    let resource_ids: HashSet<String> = inv.resources.iter().map(|r| norm(&r.id)).collect();
+    let mut folded: HashMap<String, Vec<(String, String)>> = HashMap::new();
+    let mut fold_away: HashSet<String> = HashSet::new();
+    for resource in &inv.resources {
+        let ty = resource.resource_type.to_lowercase();
+        let id = norm(&resource.id);
+        let (owner, kind) = if ty == "microsoft.compute/disks" {
+            let Some(owner) = resource.managed_by.as_deref().filter(|m| !m.is_empty()) else {
+                continue; // unattached disk: keep it visible as its own node
+            };
+            (norm(owner), "disk")
+        } else if ty == "microsoft.network/networkinterfaces" {
+            let Some(owner) = nic_vm.get(&id) else {
+                continue; // NIC without a VM stays a node (in its subnet)
+            };
+            (owner.clone(), "nic")
+        } else if ty.ends_with("/extensions") || ty.ends_with("/slots") {
+            // Child resources, e.g. Microsoft.Compute/virtualMachines/extensions
+            // (…/virtualMachines/gitlab/extensions/AADSSHLoginForLinux) or
+            // Microsoft.Web/sites/slots (…/sites/app/slots/staging).
+            let (marker, kind) = if ty.ends_with("/extensions") {
+                ("/extensions/", "extension")
+            } else {
+                ("/slots/", "slot")
+            };
+            let Some(pos) = id.rfind(marker) else {
+                continue;
+            };
+            (id[..pos].to_string(), kind)
+        } else {
+            continue;
+        };
+        if resource_ids.contains(&owner) {
+            let name = resource.name.rsplit('/').next().unwrap_or(&resource.name);
+            folded
+                .entry(owner)
+                .or_default()
+                .push((kind.to_string(), name.to_string()));
+            fold_away.insert(id);
+        }
+    }
+
     // Flat resource inventory. Every resource is top-level — the layout places
     // it by its dependencies; only vnet ▸ subnet membership stays as nesting.
     for resource in &inv.resources {
         let id = norm(&resource.id);
-        if index.contains_key(&id) {
+        if index.contains_key(&id) || fold_away.contains(&id) {
             continue;
         }
         let mut metadata = Vec::new();
@@ -213,6 +272,7 @@ pub fn build_topology(inv: AzureInventory) -> Topology {
                 parent_id: None,
                 container: resource.resource_type.to_lowercase() == VNET_TYPE,
                 group: group_label(&resource.resource_group),
+                attachments: Vec::new(),
                 region: resource.location.clone(),
                 metadata,
             },
@@ -237,6 +297,7 @@ pub fn build_topology(inv: AzureInventory) -> Topology {
                     parent_id: None,
                     container: true,
                     group: group_label(&vnet.resource_group),
+                    attachments: Vec::new(),
                     region: vnet.location.clone(),
                     metadata: Vec::new(),
                 },
@@ -275,6 +336,7 @@ pub fn build_topology(inv: AzureInventory) -> Topology {
                     parent_id: Some(vnet_id.clone()),
                     container: true,
                     group: None,
+                    attachments: Vec::new(),
                     region: None,
                     metadata: prefix
                         .map(|p| ("addressPrefix".to_string(), p))
@@ -282,6 +344,31 @@ pub fn build_topology(inv: AzureInventory) -> Topology {
                         .collect(),
                 },
             );
+        }
+    }
+
+    // App Services nest inside their App Service plan (`az webapp list`
+    // carries appServicePlanId); a hosting plan renders as a container box.
+    for app in &inv.webapps {
+        let app_id = norm(&app.id);
+        let Some(plan) = app.app_service_plan_id.as_deref().filter(|p| !p.is_empty()) else {
+            continue;
+        };
+        let plan_id = norm(plan);
+        let (Some(&ai), Some(&pi)) = (index.get(&app_id), index.get(&plan_id)) else {
+            continue;
+        };
+        if nodes[ai].parent_id.is_none() {
+            nodes[ai].parent_id = Some(plan_id);
+            nodes[pi].container = true;
+        }
+    }
+
+    // Hand each owner its folded-in subsidiaries, sorted for determinism.
+    for (owner, mut items) in folded {
+        if let Some(&i) = index.get(&owner) {
+            items.sort();
+            nodes[i].attachments.extend(items);
         }
     }
 
@@ -336,12 +423,20 @@ pub fn build_topology(inv: AzureInventory) -> Topology {
         add_edge(nsg, subnet, EdgeKind::Network, "protects", &mut edges);
     }
 
+    // NICs anchor the network wiring. A NIC owned by a VM has been folded
+    // into that VM's card, so everything the NIC implies — subnet membership,
+    // public IPs, NSG protection — re-anchors onto the VM itself: the VM
+    // renders inside its subnet, with the NIC as card subtext.
     for nic in &inv.nics {
         let nic_id = norm(&nic.id);
-        let Some(&nic_index) = index.get(&nic_id) else {
-            continue; // NIC absent from resource listing; skip rather than invent
+        let anchor_id = match nic_vm.get(&nic_id).filter(|vm| index.contains_key(*vm)) {
+            Some(vm) => vm.clone(),
+            None => nic_id.clone(),
         };
-        // NIC-level NSG association (from the nic listing).
+        let Some(&anchor_index) = index.get(&anchor_id) else {
+            continue; // absent from the resource listing; skip rather than invent
+        };
+        // NSG association from the nic listing.
         if let Some(nsg) = nic
             .network_security_group
             .as_ref()
@@ -349,31 +444,20 @@ pub fn build_topology(inv: AzureInventory) -> Topology {
         {
             add_edge(
                 norm(nsg),
-                nic_id.clone(),
+                anchor_id.clone(),
                 EdgeKind::Network,
                 "protects",
                 &mut edges,
             );
         }
-        if let Some(vm) = nic.virtual_machine.as_ref().and_then(|v| v.id.as_deref()) {
-            add_edge(
-                norm(vm),
-                nic_id.clone(),
-                EdgeKind::Association,
-                "attached",
-                &mut edges,
-            );
-        }
-        // A NIC lives in its subnet: nest it there instead of drawing an edge.
-        // Fall back to leaving it top-level if the subnet wasn't discovered.
-        let mut nested = false;
+        // Nest the anchor into the NIC's subnet (first one wins); public IPs
+        // become association edges.
         for ip_config in &nic.ip_configurations {
-            if !nested {
+            if nodes[anchor_index].parent_id.is_none() {
                 if let Some(subnet) = ip_config.subnet.as_ref().and_then(|s| s.id.as_deref()) {
                     let subnet_id = norm(subnet);
                     if index.contains_key(&subnet_id) {
-                        nodes[nic_index].parent_id = Some(subnet_id);
-                        nested = true;
+                        nodes[anchor_index].parent_id = Some(subnet_id);
                     }
                 }
             }
@@ -383,7 +467,7 @@ pub fn build_topology(inv: AzureInventory) -> Topology {
                 .and_then(|p| p.id.as_deref())
             {
                 add_edge(
-                    nic_id.clone(),
+                    anchor_id.clone(),
                     norm(pip),
                     EdgeKind::Association,
                     "public IP",
@@ -427,6 +511,7 @@ mod tests {
             resources: serde_json::from_str(include_str!("fixtures/resources.json")).unwrap(),
             vnets: serde_json::from_str(include_str!("fixtures/vnets.json")).unwrap(),
             nics: serde_json::from_str(include_str!("fixtures/nics.json")).unwrap(),
+            webapps: serde_json::from_str(include_str!("fixtures/webapps.json")).unwrap(),
             warnings: Vec::new(),
         })
     }
@@ -445,9 +530,10 @@ mod tests {
             )),
             "subscription/resource-group containers should no longer be nodes"
         );
-        // Non-network resources sit at the top level (no containment parent).
+        // Resources without a network/hosting home sit at the top level.
+        let storage = find(&t, "ststray");
+        assert_eq!(storage.parent_id, None);
         let vm = find(&t, "vm-web-01");
-        assert_eq!(vm.parent_id, None);
         assert_eq!(vm.group.as_deref(), Some("rg-app"));
     }
 
@@ -497,56 +583,80 @@ mod tests {
     }
 
     #[test]
-    fn derives_vm_nic_subnet_and_public_ip_edges() {
+    fn vm_nests_into_its_subnet_with_nic_folded() {
         let t = build();
-        let with_label = |label: &str| -> Vec<&TopologyEdge> {
-            t.edges
-                .iter()
-                .filter(|e| e.label.as_deref() == Some(label))
-                .collect()
-        };
+        // The NIC is owned by vm-web-01, so it folds into the VM's card and
+        // the VM itself renders inside the NIC's subnet. The ghost subnet in
+        // a non-existent vnet is ignored, so snet-a wins.
+        assert!(!t.nodes.iter().any(|n| n.name == "nic-web-01"));
+        let vm = find(&t, "vm-web-01");
+        let vm_parent = vm.parent_id.as_deref().unwrap();
+        assert!(vm_parent.contains("subnets/snet-a"));
+        assert!(!vm_parent.contains("snet-missing"));
 
-        // VM -> NIC (from the nic listing) and VM -> data disk (from managedBy).
-        let attached = with_label("attached");
-        assert_eq!(attached.len(), 2);
-        for e in &attached {
-            assert!(e.source.contains("virtualmachines/vm-web-01"));
-        }
-        assert!(attached
+        // NIC-implied edges re-anchor on the VM.
+        let public_ip: Vec<&TopologyEdge> = t
+            .edges
             .iter()
-            .any(|e| e.target.contains("networkinterfaces/nic-web-01")));
-        assert!(attached
-            .iter()
-            .any(|e| e.target.contains("disks/datadisk_1")));
-
-        // NIC nesting replaces the old "in subnet" edge; the ghost subnet in a
-        // non-existent vnet is ignored, so the NIC lands in snet-a.
-        assert!(with_label("in subnet").is_empty());
-        let nic = find(&t, "nic-web-01");
-        let nic_parent = nic.parent_id.as_deref().unwrap();
-        assert!(nic_parent.contains("subnets/snet-a"));
-        assert!(!nic_parent.contains("snet-missing"));
-
-        let public_ip = with_label("public IP");
+            .filter(|e| e.label.as_deref() == Some("public IP"))
+            .collect();
         assert_eq!(public_ip.len(), 1);
+        assert!(public_ip[0].source.contains("virtualmachines/vm-web-01"));
         assert!(public_ip[0].target.contains("publicipaddresses/pip-web"));
+
+        // No leftover free-standing wiring edges.
+        assert!(!t
+            .edges
+            .iter()
+            .any(|e| e.label.as_deref() == Some("attached")
+                || e.label.as_deref() == Some("in subnet")));
     }
 
     #[test]
-    fn managed_by_attaches_data_disk_to_its_vm() {
-        // The user-reported case: a VM's data disk was shown with no
-        // association. `az resource list` carries managedBy = the VM id.
+    fn disks_extensions_and_nics_fold_into_their_vm() {
+        // Attached managed disks (managedBy = the VM), VM extensions, and
+        // VM-owned NICs are not free-standing nodes — they ride on the card.
         let t = build();
-        let disk = find(&t, "DataDisk_1");
-        assert_eq!(disk.category, ResourceCategory::Compute);
-        let edge = t
-            .edges
+        assert!(!t.nodes.iter().any(|n| n.name == "DataDisk_1"));
+        assert!(!t
+            .nodes
             .iter()
-            .find(|e| e.target == disk.id)
-            .expect("disk should have an incoming edge");
-        assert!(edge.source.contains("virtualmachines/vm-web-01"));
-        assert_eq!(edge.label.as_deref(), Some("attached"));
-        assert_eq!(edge.kind, EdgeKind::Association);
+            .any(|n| n.name.contains("AADSSHLoginForLinux")));
+
+        let vm = find(&t, "vm-web-01");
+        assert_eq!(
+            vm.attachments,
+            vec![
+                ("disk".to_string(), "DataDisk_1".to_string()),
+                ("extension".to_string(), "AADSSHLoginForLinux".to_string()),
+                ("nic".to_string(), "nic-web-01".to_string()),
+            ]
+        );
+        assert_eq!(
+            vm.card_subtext().as_deref(),
+            Some("rg-app · 1 disk · 1 extension · 1 nic")
+        );
+
+        // An unattached disk stays visible as its own node.
+        let orphan = find(&t, "disk-orphan");
+        assert!(orphan.attachments.is_empty());
+    }
+
+    #[test]
+    fn app_service_nests_in_its_plan_and_slot_folds_in() {
+        let t = build();
+        let app = find(&t, "app-portal");
+        let plan = find(&t, "plan-portal");
+        assert_eq!(app.parent_id.as_deref(), Some(plan.id.as_str()));
+        assert!(plan.container, "a hosting plan renders as a container");
+        // The staging slot rides on the site's card.
+        assert!(!t.nodes.iter().any(|n| n.name == "app-portal/staging"));
+        assert_eq!(
+            app.attachments,
+            vec![("slot".to_string(), "staging".to_string())]
+        );
+        // A webapp whose site/plan never appeared in the listings is skipped.
+        assert!(!t.nodes.iter().any(|n| n.name == "app-ghost"));
     }
 
     #[test]
@@ -557,7 +667,8 @@ mod tests {
             .iter()
             .filter(|e| e.label.as_deref() == Some("protects"))
             .collect();
-        // subnet-level (vnet listing) + nic-level (nic listing).
+        // subnet-level (vnet listing) + nic-level (nic listing, re-anchored
+        // onto the NIC's VM).
         assert_eq!(protects.len(), 2);
         for e in &protects {
             assert!(e.source.contains("networksecuritygroups/nsg-web"));
@@ -566,7 +677,7 @@ mod tests {
         assert!(protects.iter().any(|e| e.target.contains("subnets/snet-a")));
         assert!(protects
             .iter()
-            .any(|e| e.target.contains("networkinterfaces/nic-web-01")));
+            .any(|e| e.target.contains("virtualmachines/vm-web-01")));
     }
 
     #[test]

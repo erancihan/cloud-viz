@@ -80,10 +80,43 @@ pub struct TopologyNode {
     /// `default` so older cached topology files still deserialize.
     #[serde(default)]
     pub group: Option<String>,
+    /// Subsidiary resources folded into this node instead of drawn as their
+    /// own nodes — e.g. a VM's attached managed disks and extensions. Pairs of
+    /// (short kind, name), like ("disk", "DataDisk_1"). Summarized on the
+    /// card, listed in full in the details panel.
+    #[serde(default)]
+    pub attachments: Vec<(String, String)>,
     pub region: Option<String>,
     /// Provider-specific extras surfaced in the details panel (tags, sku…).
     /// Kept ordered so the panel is stable between refreshes.
     pub metadata: Vec<(String, String)>,
+}
+
+impl TopologyNode {
+    /// Compact third card line: resource group plus a summary of folded-in
+    /// attachments, e.g. `rg-app · 2 disks · 1 extension`. Shared by the egui
+    /// canvas and the SVG exporter so the two painters stay in sync.
+    pub fn card_subtext(&self) -> Option<String> {
+        let mut parts: Vec<String> = Vec::new();
+        if let Some(group) = &self.group {
+            parts.push(group.clone());
+        }
+        let mut counts: Vec<(&str, usize)> = Vec::new();
+        for (kind, _) in &self.attachments {
+            match counts.iter_mut().find(|(k, _)| *k == kind.as_str()) {
+                Some((_, n)) => *n += 1,
+                None => counts.push((kind, 1)),
+            }
+        }
+        for (kind, n) in counts {
+            parts.push(if n == 1 {
+                format!("1 {kind}")
+            } else {
+                format!("{n} {kind}s")
+            });
+        }
+        (!parts.is_empty()).then(|| parts.join(" · "))
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

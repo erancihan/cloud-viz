@@ -99,6 +99,14 @@ pub struct AzNicIpConfiguration {
     pub public_ip_address: Option<AzIdRef>,
 }
 
+/// One entry of `az webapp list` — only the plan linkage is read.
+#[derive(Debug, Clone, Deserialize)]
+pub struct AzWebApp {
+    pub id: String,
+    #[serde(default, rename = "appServicePlanId", alias = "serverFarmId")]
+    pub app_service_plan_id: Option<String>,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct AzIdRef {
     #[serde(default)]

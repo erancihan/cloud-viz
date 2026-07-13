@@ -398,9 +398,9 @@ fn draw_card(
     let name_font = FontId::proportional((12.5 * zoom).max(6.0));
     let sub_font = FontId::proportional((10.5 * zoom).max(5.0));
     let cy = rect.center().y;
-    // A third subtext line carries the resource group when present, so the RG
-    // reads on the card instead of via a container box.
-    if let Some(group) = &node.group {
+    // A third subtext line carries the resource group and folded-in
+    // attachments ("rg-app · 2 disks · 1 nic") when present.
+    if let Some(subtext) = node.card_subtext() {
         let line = 13.0 * zoom;
         draw_truncated(
             painter,
@@ -424,7 +424,7 @@ fn draw_card(
             painter,
             Pos2::new(tx, cy + line),
             Align2::LEFT_CENTER,
-            group,
+            &subtext,
             sub_font,
             c32a(theme.ink_3, 200),
             max_w,
