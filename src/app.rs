@@ -411,6 +411,9 @@ impl CloudVizApp {
                         ui.separator();
                     };
 
+                    if let Some(group) = &node.group {
+                        row("Resource group", group, false);
+                    }
                     if let Some(region) = &node.region {
                         row("Region", region, false);
                     }

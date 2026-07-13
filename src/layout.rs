@@ -1,6 +1,9 @@
-//! Deterministic nested layout with deliberately relaxed spacing: leaves are
-//! fixed-size cards, containers pack their children onto shelves (rows)
-//! aiming at a roughly square footprint, and grow to fit. Positions are
+//! Deterministic layout with deliberately relaxed spacing. Containers (vnets,
+//! subnets) pack their children onto shelves (rows) aiming at a roughly square
+//! footprint and grow to fit; the top level is then placed by a compound
+//! spring embedder (`force_layout`) so resources connected by an edge cluster
+//! together while unconnected ones spread out. No RNG and a fixed iteration
+//! count, so the same topology always yields the same picture. Positions are
 //! absolute world coordinates, ready for painting.
 //!
 //! No GUI types here — the module is unit-testable headlessly and shared by
@@ -12,11 +15,10 @@ use std::collections::{HashMap, HashSet};
 // Spacing constants. Generous on purpose: cards and containers get room to
 // breathe so relationship edges route loosely instead of hugging the nodes.
 pub const LEAF_W: f32 = 240.0;
-pub const LEAF_H: f32 = 68.0;
+pub const LEAF_H: f32 = 76.0;
 pub const GAP: f32 = 36.0;
 pub const PAD: f32 = 28.0;
 pub const HEADER: f32 = 52.0;
-pub const ROOT_GAP: f32 = 120.0;
 const EMPTY_W: f32 = 280.0;
 const EMPTY_H: f32 = 116.0;
 /// Wider-than-tall packing bias — screens are landscape.
@@ -191,7 +193,13 @@ pub fn layout_topology(topology: &Topology) -> Layout {
         .iter()
         .map(|&r| measure(r, nodes, &children_of, &sort_children))
         .collect();
-    let (placed_roots, _, _) = shelf_pack(root_boxes, ROOT_GAP);
+    // Top level is placed by a spring embedder so dependencies cluster, rather
+    // than shelf-packed. Containers are still packed internally by `measure`.
+    let placed_roots: Vec<(f32, f32, Measured)> = force_layout(&root_boxes, nodes, &topology.edges)
+        .into_iter()
+        .zip(root_boxes)
+        .map(|((x, y), m)| (x, y, m))
+        .collect();
 
     // Flatten depth-first so parents always precede their children.
     let mut placed: Vec<PlacedNode> = Vec::with_capacity(nodes.len());
@@ -274,6 +282,188 @@ fn shelf_pack(boxes: Vec<Measured>, gap: f32) -> (Vec<(f32, f32, Measured)>, f32
     }
 
     (placed, max_right, y + row_h)
+}
+
+/// Deterministic compound spring embedder for the top level: root boxes whose
+/// subtrees are connected by an edge are pulled together, everything repels,
+/// and a final separation pass removes residual overlap. No RNG and a fixed
+/// iteration count, so the same topology always yields the same picture.
+/// Returns each root's top-left corner, in `roots` order.
+fn force_layout(
+    roots: &[Measured],
+    nodes: &[TopologyNode],
+    edges: &[crate::model::TopologyEdge],
+) -> Vec<(f32, f32)> {
+    let n = roots.len();
+    if n <= 1 {
+        return vec![(0.0, 0.0); n];
+    }
+    let sizes: Vec<(f32, f32)> = roots.iter().map(|m| (m.w, m.h)).collect();
+
+    // node index -> the root subtree it belongs to.
+    fn collect(m: &Measured, root: usize, out: &mut HashMap<usize, usize>) {
+        out.insert(m.node_index, root);
+        for (_, _, c) in &m.children {
+            collect(c, root, out);
+        }
+    }
+    let mut root_of: HashMap<usize, usize> = HashMap::new();
+    for (r, m) in roots.iter().enumerate() {
+        collect(m, r, &mut root_of);
+    }
+    let idx_of_id: HashMap<&str, usize> = nodes
+        .iter()
+        .enumerate()
+        .map(|(i, node)| (node.id.as_str(), i))
+        .collect();
+
+    // Lift each edge to the two roots that contain its endpoints.
+    let mut springs: Vec<(usize, usize)> = Vec::new();
+    for e in edges {
+        let (Some(&si), Some(&ti)) = (
+            idx_of_id.get(e.source.as_str()),
+            idx_of_id.get(e.target.as_str()),
+        ) else {
+            continue;
+        };
+        if let (Some(&ra), Some(&rb)) = (root_of.get(&si), root_of.get(&ti)) {
+            if ra != rb {
+                springs.push((ra, rb));
+            }
+        }
+    }
+
+    // Ideal separation scales with box size so linked boxes settle adjacent.
+    let avg_diag = sizes
+        .iter()
+        .map(|(w, h)| (w * w + h * h).sqrt())
+        .sum::<f32>()
+        / n as f32;
+    let k = avg_diag * 0.6 + GAP;
+    // Central gravity keeps otherwise-unconnected nodes from drifting away;
+    // the clamp is a hard safety bound so the picture can never explode.
+    let gravity = 0.7;
+    let bound = (n as f32).sqrt() * (avg_diag + k) * 1.5;
+
+    // Deterministic grid seed, walked in id order and centered on the origin.
+    let mut order: Vec<usize> = (0..n).collect();
+    order.sort_by(|&a, &b| {
+        nodes[roots[a].node_index]
+            .id
+            .cmp(&nodes[roots[b].node_index].id)
+    });
+    let cols = (n as f32).sqrt().ceil().max(1.0) as usize;
+    let rows = n.div_ceil(cols);
+    let cell = avg_diag + k;
+    let mut pos = vec![(0.0f32, 0.0f32); n];
+    let (cx0, cy0) = (
+        (cols as f32 - 1.0) * cell / 2.0,
+        (rows as f32 - 1.0) * cell / 2.0,
+    );
+    for (rank, &i) in order.iter().enumerate() {
+        pos[i] = (
+            (rank % cols) as f32 * cell - cx0,
+            (rank / cols) as f32 * cell - cy0,
+        );
+    }
+
+    let iters = 500;
+    let temp0 = k * 1.2;
+    for it in 0..iters {
+        let temp = temp0 * (1.0 - it as f32 / iters as f32).max(0.02);
+        let mut disp = vec![(0.0f32, 0.0f32); n];
+        // Repulsion between every pair.
+        for i in 0..n {
+            for j in (i + 1)..n {
+                let mut dx = pos[i].0 - pos[j].0;
+                let mut dy = pos[i].1 - pos[j].1;
+                let mut d2 = dx * dx + dy * dy;
+                if d2 < 1e-4 {
+                    // Deterministic nudge apart for coincident centers.
+                    dx = (i as f32 - j as f32) * 0.01 + 0.01;
+                    dy = ((i * 7 + j) % 13) as f32 * 0.01 + 0.01;
+                    d2 = dx * dx + dy * dy;
+                }
+                let d = d2.sqrt();
+                let f = k * k / d;
+                let (ux, uy) = (dx / d, dy / d);
+                disp[i].0 += ux * f;
+                disp[i].1 += uy * f;
+                disp[j].0 -= ux * f;
+                disp[j].1 -= uy * f;
+            }
+        }
+        // Attraction along lifted edges.
+        for &(a, b) in &springs {
+            let dx = pos[a].0 - pos[b].0;
+            let dy = pos[a].1 - pos[b].1;
+            let d = (dx * dx + dy * dy).sqrt().max(1e-3);
+            let f = d * d / k;
+            let (ux, uy) = (dx / d, dy / d);
+            disp[a].0 -= ux * f;
+            disp[a].1 -= uy * f;
+            disp[b].0 += ux * f;
+            disp[b].1 += uy * f;
+        }
+        // Central gravity, pulling everything toward the origin.
+        for i in 0..n {
+            disp[i].0 -= pos[i].0 * gravity;
+            disp[i].1 -= pos[i].1 * gravity;
+        }
+        // Integrate, capping the per-step move by the cooling temperature, and
+        // clamp within the safety bound.
+        for i in 0..n {
+            let (dx, dy) = disp[i];
+            let d = (dx * dx + dy * dy).sqrt();
+            if d > 1e-6 {
+                let step = d.min(temp);
+                pos[i].0 = (pos[i].0 + dx / d * step).clamp(-bound, bound);
+                pos[i].1 = (pos[i].1 + dy / d * step).clamp(-bound, bound);
+            }
+        }
+    }
+
+    separate(&mut pos, &sizes, GAP);
+
+    pos.iter()
+        .zip(&sizes)
+        .map(|(&(cx, cy), &(w, h))| (cx - w / 2.0, cy - h / 2.0))
+        .collect()
+}
+
+/// Push overlapping boxes apart (centers in `pos`, sizes in `sizes`) until each
+/// pair clears `gap` on at least one axis. Deterministic and, for the modest
+/// top-level counts here, converges well within the pass budget.
+fn separate(pos: &mut [(f32, f32)], sizes: &[(f32, f32)], gap: f32) {
+    let n = pos.len();
+    for _ in 0..600 {
+        let mut moved = false;
+        for i in 0..n {
+            for j in (i + 1)..n {
+                let (wi, hi) = sizes[i];
+                let (wj, hj) = sizes[j];
+                let dx = pos[j].0 - pos[i].0;
+                let dy = pos[j].1 - pos[i].1;
+                let ox = (wi + wj) / 2.0 + gap - dx.abs();
+                let oy = (hi + hj) / 2.0 + gap - dy.abs();
+                if ox > 0.0 && oy > 0.0 {
+                    if ox <= oy {
+                        let push = ox / 2.0 * if dx >= 0.0 { 1.0 } else { -1.0 };
+                        pos[i].0 -= push;
+                        pos[j].0 += push;
+                    } else {
+                        let push = oy / 2.0 * if dy >= 0.0 { 1.0 } else { -1.0 };
+                        pos[i].1 -= push;
+                        pos[j].1 += push;
+                    }
+                    moved = true;
+                }
+            }
+        }
+        if !moved {
+            break;
+        }
+    }
 }
 
 #[cfg(test)]

@@ -208,20 +208,45 @@ pub fn to_svg(topology: &Topology, theme: &Theme) -> String {
             glyph_svg(node.category, cat)
         );
         let tx = cx + chip + 12.0;
-        let _ = write!(
-            svg,
-            r#"<text x="{tx:.1}" y="{:.1}" font-size="12.5" font-weight="600" fill="{}">{}</text>"#,
-            r.y + r.h / 2.0 - 4.0,
-            theme.ink.hex(),
-            escape(&truncate(&node.name, 24))
-        );
-        let _ = write!(
-            svg,
-            r#"<text x="{tx:.1}" y="{:.1}" font-size="11" fill="{}">{}</text>"#,
-            r.y + r.h / 2.0 + 12.0,
-            theme.ink_3.hex(),
-            escape(&truncate(&node.kind_label, 26))
-        );
+        let mid = r.y + r.h / 2.0;
+        if let Some(group) = &node.group {
+            let _ = write!(
+                svg,
+                r#"<text x="{tx:.1}" y="{:.1}" font-size="12.5" font-weight="600" fill="{}">{}</text>"#,
+                mid - 9.0,
+                theme.ink.hex(),
+                escape(&truncate(&node.name, 24))
+            );
+            let _ = write!(
+                svg,
+                r#"<text x="{tx:.1}" y="{:.1}" font-size="10.5" fill="{}">{}</text>"#,
+                mid + 4.0,
+                theme.ink_3.hex(),
+                escape(&truncate(&node.kind_label, 26))
+            );
+            let _ = write!(
+                svg,
+                r#"<text x="{tx:.1}" y="{:.1}" font-size="10.5" fill="{}" fill-opacity="0.78">{}</text>"#,
+                mid + 17.0,
+                theme.ink_3.hex(),
+                escape(&truncate(group, 26))
+            );
+        } else {
+            let _ = write!(
+                svg,
+                r#"<text x="{tx:.1}" y="{:.1}" font-size="12.5" font-weight="600" fill="{}">{}</text>"#,
+                mid - 4.0,
+                theme.ink.hex(),
+                escape(&truncate(&node.name, 24))
+            );
+            let _ = write!(
+                svg,
+                r#"<text x="{tx:.1}" y="{:.1}" font-size="11" fill="{}">{}</text>"#,
+                mid + 12.0,
+                theme.ink_3.hex(),
+                escape(&truncate(&node.kind_label, 26))
+            );
+        }
     }
 
     svg.push_str("</svg>");

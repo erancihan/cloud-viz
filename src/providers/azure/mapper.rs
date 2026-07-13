@@ -169,90 +169,28 @@ pub fn build_topology(inv: AzureInventory) -> Topology {
 
     let norm = |id: &str| id.to_lowercase();
 
-    // Subscription root.
-    let subscription_id = format!("/subscriptions/{}", inv.account.id).to_lowercase();
-    let mut sub_meta = vec![("subscriptionId".to_string(), inv.account.id.clone())];
-    if let Some(tenant) = &inv.account.tenant_id {
-        sub_meta.push(("tenantId".into(), tenant.clone()));
-    }
-    if let Some(user) = inv.account.user.as_ref().and_then(|u| u.name.clone()) {
-        sub_meta.push(("signedInAs".into(), user));
-    }
-    add_node(
-        &mut nodes,
-        &mut index,
-        TopologyNode {
-            id: subscription_id.clone(),
-            name: inv.account.name.clone(),
-            kind: "azure/subscription".into(),
-            kind_label: "Subscription".into(),
-            category: ResourceCategory::Scope,
-            parent_id: None,
-            container: true,
-            region: None,
-            metadata: sub_meta,
-        },
-    );
-
-    // Resource groups. ARM treats RG names case-insensitively → key by lowercase name.
-    let mut rg_id_by_name: HashMap<String, String> = HashMap::new();
+    // Resource-group display names, keyed case-insensitively. Resource groups
+    // are no longer container nodes — the name rides along as card subtext.
+    let mut rg_display: HashMap<String, String> = HashMap::new();
     for group in &inv.groups {
-        let id = norm(&group.id);
-        rg_id_by_name.insert(group.name.to_lowercase(), id.clone());
-        add_node(
-            &mut nodes,
-            &mut index,
-            TopologyNode {
-                id,
-                name: group.name.clone(),
-                kind: "azure/resourceGroup".into(),
-                kind_label: "Resource group".into(),
-                category: ResourceCategory::Group,
-                parent_id: Some(subscription_id.clone()),
-                container: true,
-                region: group.location.clone(),
-                metadata: tags_metadata(&group.tags),
-            },
-        );
+        rg_display.insert(group.name.to_lowercase(), group.name.clone());
     }
+    let group_label = |rg: &Option<String>| -> Option<String> {
+        rg.as_ref().map(|name| {
+            rg_display
+                .get(&name.to_lowercase())
+                .cloned()
+                .unwrap_or_else(|| name.clone())
+        })
+    };
 
-    // Resources can reference an RG the group listing didn't return — synthesize it.
-    let mut ensure_rg =
-        |name: &str, nodes: &mut Vec<TopologyNode>, index: &mut HashMap<String, usize>| -> String {
-            let key = name.to_lowercase();
-            if let Some(id) = rg_id_by_name.get(&key) {
-                return id.clone();
-            }
-            let id = format!("{subscription_id}/resourcegroups/{key}");
-            rg_id_by_name.insert(key, id.clone());
-            add_node(
-                nodes,
-                index,
-                TopologyNode {
-                    id: id.clone(),
-                    name: name.to_string(),
-                    kind: "azure/resourceGroup".into(),
-                    kind_label: "Resource group".into(),
-                    category: ResourceCategory::Group,
-                    parent_id: Some(subscription_id.clone()),
-                    container: true,
-                    region: None,
-                    metadata: Vec::new(),
-                },
-            );
-            id
-        };
-
-    // Flat resource inventory.
+    // Flat resource inventory. Every resource is top-level — the layout places
+    // it by its dependencies; only vnet ▸ subnet membership stays as nesting.
     for resource in &inv.resources {
         let id = norm(&resource.id);
         if index.contains_key(&id) {
             continue;
         }
-        let parent = match &resource.resource_group {
-            Some(rg) => ensure_rg(rg, &mut nodes, &mut index),
-            None => subscription_id.clone(),
-        };
         let mut metadata = Vec::new();
         if let Some(kind) = resource.kind.as_ref().filter(|k| !k.is_empty()) {
             metadata.push(("kind".into(), kind.clone()));
@@ -272,22 +210,20 @@ pub fn build_topology(inv: AzureInventory) -> Topology {
                 kind: resource.resource_type.clone(),
                 kind_label: type_label(&resource.resource_type),
                 category: categorize(&resource.resource_type),
-                parent_id: Some(parent),
+                parent_id: None,
                 container: resource.resource_type.to_lowercase() == VNET_TYPE,
+                group: group_label(&resource.resource_group),
                 region: resource.location.clone(),
                 metadata,
             },
         );
     }
 
-    // Virtual networks: enrich with address space and hang subnets inside.
+    // Virtual networks (top-level containers) enriched with address space, each
+    // holding its subnets, which in turn hold their member NICs.
     for vnet in &inv.vnets {
         let vnet_id = norm(&vnet.id);
         if !index.contains_key(&vnet_id) {
-            let parent = match &vnet.resource_group {
-                Some(rg) => ensure_rg(rg, &mut nodes, &mut index),
-                None => subscription_id.clone(),
-            };
             add_node(
                 &mut nodes,
                 &mut index,
@@ -297,8 +233,9 @@ pub fn build_topology(inv: AzureInventory) -> Topology {
                     kind: "Microsoft.Network/virtualNetworks".into(),
                     kind_label: "Virtual network".into(),
                     category: ResourceCategory::Network,
-                    parent_id: Some(parent),
+                    parent_id: None,
                     container: true,
+                    group: group_label(&vnet.resource_group),
                     region: vnet.location.clone(),
                     metadata: Vec::new(),
                 },
@@ -328,7 +265,8 @@ pub fn build_topology(inv: AzureInventory) -> Topology {
                     kind_label: "Subnet".into(),
                     category: ResourceCategory::Network,
                     parent_id: Some(vnet_id.clone()),
-                    container: false,
+                    container: true,
+                    group: None,
                     region: None,
                     metadata: prefix
                         .map(|p| ("addressPrefix".to_string(), p))
@@ -362,9 +300,9 @@ pub fn build_topology(inv: AzureInventory) -> Topology {
 
     for nic in &inv.nics {
         let nic_id = norm(&nic.id);
-        if !index.contains_key(&nic_id) {
+        let Some(&nic_index) = index.get(&nic_id) else {
             continue; // NIC absent from resource listing; skip rather than invent
-        }
+        };
         if let Some(vm) = nic.virtual_machine.as_ref().and_then(|v| v.id.as_deref()) {
             add_edge(
                 norm(vm),
@@ -374,15 +312,18 @@ pub fn build_topology(inv: AzureInventory) -> Topology {
                 &mut edges,
             );
         }
+        // A NIC lives in its subnet: nest it there instead of drawing an edge.
+        // Fall back to leaving it top-level if the subnet wasn't discovered.
+        let mut nested = false;
         for ip_config in &nic.ip_configurations {
-            if let Some(subnet) = ip_config.subnet.as_ref().and_then(|s| s.id.as_deref()) {
-                add_edge(
-                    nic_id.clone(),
-                    norm(subnet),
-                    EdgeKind::Network,
-                    "in subnet",
-                    &mut edges,
-                );
+            if !nested {
+                if let Some(subnet) = ip_config.subnet.as_ref().and_then(|s| s.id.as_deref()) {
+                    let subnet_id = norm(subnet);
+                    if index.contains_key(&subnet_id) {
+                        nodes[nic_index].parent_id = Some(subnet_id);
+                        nested = true;
+                    }
+                }
             }
             if let Some(pip) = ip_config
                 .public_ip_address
@@ -427,8 +368,6 @@ fn compact_json(value: &serde_json::Value) -> String {
 mod tests {
     use super::*;
 
-    const SUB: &str = "/subscriptions/00000000-0000-0000-0000-000000000001";
-
     fn build() -> Topology {
         build_topology(AzureInventory {
             account: serde_json::from_str(include_str!("fixtures/account.json")).unwrap(),
@@ -445,49 +384,37 @@ mod tests {
     }
 
     #[test]
-    fn creates_subscription_root_with_resource_groups() {
+    fn no_subscription_or_resource_group_nodes() {
         let t = build();
-        let sub = t
-            .nodes
-            .iter()
-            .find(|n| n.kind == "azure/subscription")
-            .unwrap();
-        assert_eq!(sub.id, SUB);
-        assert!(sub.container);
-
-        let mut rgs: Vec<&str> = t
-            .nodes
-            .iter()
-            .filter(|n| n.kind == "azure/resourceGroup")
-            .map(|n| n.name.as_str())
-            .collect();
-        rgs.sort();
-        assert_eq!(rgs, ["rg-app", "rg-net", "rg-orphan"]);
-        for n in t.nodes.iter().filter(|n| n.kind == "azure/resourceGroup") {
-            assert_eq!(n.parent_id.as_deref(), Some(SUB));
-        }
+        assert!(
+            !t.nodes.iter().any(|n| matches!(
+                n.category,
+                ResourceCategory::Scope | ResourceCategory::Group
+            )),
+            "subscription/resource-group containers should no longer be nodes"
+        );
+        // Non-network resources sit at the top level (no containment parent).
+        let vm = find(&t, "vm-web-01");
+        assert_eq!(vm.parent_id, None);
+        assert_eq!(vm.group.as_deref(), Some("rg-app"));
     }
 
     #[test]
-    fn matches_resource_group_names_case_insensitively() {
+    fn resource_group_label_uses_listing_casing() {
         let t = build();
-        // fixture uses resourceGroup "RG-App" while the group listing says "rg-app"
+        // fixture resource says "RG-App"; the group listing says "rg-app".
         let vm = find(&t, "vm-web-01");
-        assert_eq!(
-            vm.parent_id.as_deref(),
-            Some(&format!("{SUB}/resourcegroups/rg-app")[..])
-        );
+        assert_eq!(vm.group.as_deref(), Some("rg-app"));
         assert_eq!(vm.category, ResourceCategory::Compute);
     }
 
     #[test]
-    fn synthesizes_unlisted_resource_groups() {
+    fn resource_group_not_in_listing_still_labels_card() {
         let t = build();
+        // ststray is in rg-orphan, which the group listing didn't return.
         let stray = find(&t, "ststray");
-        let parent_id = stray.parent_id.clone().unwrap();
-        let rg = t.nodes.iter().find(|n| n.id == parent_id).unwrap();
-        assert_eq!(rg.kind, "azure/resourceGroup");
-        assert_eq!(rg.parent_id.as_deref(), Some(SUB));
+        assert_eq!(stray.parent_id, None);
+        assert_eq!(stray.group.as_deref(), Some("rg-orphan"));
     }
 
     #[test]
@@ -495,6 +422,7 @@ mod tests {
         let t = build();
         let vnet = find(&t, "vnet-hub");
         assert!(vnet.container);
+        assert!(vnet.parent_id.is_none(), "vnet should be top-level now");
         assert!(vnet
             .metadata
             .iter()
@@ -508,6 +436,7 @@ mod tests {
         assert_eq!(subnets.len(), 2);
         for s in &subnets {
             assert_eq!(s.parent_id.as_deref(), Some(vnet.id.as_str()));
+            assert!(s.container, "subnets hold their members now");
         }
         assert!(subnets[0]
             .metadata
@@ -530,10 +459,13 @@ mod tests {
         assert!(attached[0].source.contains("virtualmachines/vm-web-01"));
         assert!(attached[0].target.contains("networkinterfaces/nic-web-01"));
 
-        let in_subnet = with_label("in subnet");
-        assert_eq!(in_subnet.len(), 1);
-        assert!(in_subnet[0].target.contains("subnets/snet-a"));
-        assert_eq!(in_subnet[0].kind, EdgeKind::Network);
+        // NIC nesting replaces the old "in subnet" edge; the ghost subnet in a
+        // non-existent vnet is ignored, so the NIC lands in snet-a.
+        assert!(with_label("in subnet").is_empty());
+        let nic = find(&t, "nic-web-01");
+        let nic_parent = nic.parent_id.as_deref().unwrap();
+        assert!(nic_parent.contains("subnets/snet-a"));
+        assert!(!nic_parent.contains("snet-missing"));
 
         let public_ip = with_label("public IP");
         assert_eq!(public_ip.len(), 1);

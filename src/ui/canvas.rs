@@ -396,26 +396,59 @@ fn draw_card(
     let tx = chip.right() + 12.0 * zoom;
     let max_w = rect.right() - 10.0 * zoom - tx;
     let name_font = FontId::proportional((12.5 * zoom).max(6.0));
-    let kind_font = FontId::proportional((11.0 * zoom).max(5.0));
+    let sub_font = FontId::proportional((10.5 * zoom).max(5.0));
     let cy = rect.center().y;
-    draw_truncated(
-        painter,
-        Pos2::new(tx, cy - 2.0 * zoom),
-        Align2::LEFT_BOTTOM,
-        &node.name,
-        name_font,
-        c32(theme.ink),
-        max_w,
-    );
-    draw_truncated(
-        painter,
-        Pos2::new(tx, cy + 2.0 * zoom),
-        Align2::LEFT_TOP,
-        &node.kind_label,
-        kind_font,
-        c32(theme.ink_3),
-        max_w,
-    );
+    // A third subtext line carries the resource group when present, so the RG
+    // reads on the card instead of via a container box.
+    if let Some(group) = &node.group {
+        let line = 13.0 * zoom;
+        draw_truncated(
+            painter,
+            Pos2::new(tx, cy - line),
+            Align2::LEFT_CENTER,
+            &node.name,
+            name_font,
+            c32(theme.ink),
+            max_w,
+        );
+        draw_truncated(
+            painter,
+            Pos2::new(tx, cy),
+            Align2::LEFT_CENTER,
+            &node.kind_label,
+            sub_font.clone(),
+            c32(theme.ink_3),
+            max_w,
+        );
+        draw_truncated(
+            painter,
+            Pos2::new(tx, cy + line),
+            Align2::LEFT_CENTER,
+            group,
+            sub_font,
+            c32a(theme.ink_3, 200),
+            max_w,
+        );
+    } else {
+        draw_truncated(
+            painter,
+            Pos2::new(tx, cy - 2.0 * zoom),
+            Align2::LEFT_BOTTOM,
+            &node.name,
+            name_font,
+            c32(theme.ink),
+            max_w,
+        );
+        draw_truncated(
+            painter,
+            Pos2::new(tx, cy + 2.0 * zoom),
+            Align2::LEFT_TOP,
+            &node.kind_label,
+            sub_font,
+            c32(theme.ink_3),
+            max_w,
+        );
+    }
 }
 
 fn draw_truncated(

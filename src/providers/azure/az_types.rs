@@ -9,8 +9,6 @@ use std::collections::BTreeMap;
 pub struct AzAccount {
     pub id: String,
     pub name: String,
-    #[serde(default, rename = "tenantId")]
-    pub tenant_id: Option<String>,
     #[serde(default)]
     pub user: Option<AzAccountUser>,
     #[serde(default, rename = "isDefault")]
@@ -25,12 +23,7 @@ pub struct AzAccountUser {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct AzGroup {
-    pub id: String,
     pub name: String,
-    #[serde(default)]
-    pub location: Option<String>,
-    #[serde(default)]
-    pub tags: Option<BTreeMap<String, String>>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
