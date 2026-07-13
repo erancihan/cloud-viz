@@ -136,11 +136,13 @@ When you touch `ui/canvas.rs` interaction code, run the app locally.
 - **Read-only.** No create/rename/tag/delete yet (deliberate; see roadmap).
 - **Edge coverage is moderate.** NIC wiring re-anchors onto the VM (VM inside
   its subnet, VM→public IP, NSG→VM), `managedBy` folds attached disks into
-  the VM card, extensions/slots fold into their parent, and `az webapp list`
-  nests App Services inside their plan. Still missing: load balancer backend
-  wiring, private endpoints, VNet peering, app→database links (candidates:
-  `az vm list` storage/network profiles, `az network lb list`, or Azure
-  Resource Graph).
+  the VM card, extensions/slots fold into their parent, `az webapp list`
+  nests App Services inside their plan, and `az aks list`'s
+  `nodeResourceGroup` nests a cluster's whole `MC_...` group inside it. Still
+  missing: load balancer backend wiring, private endpoints, VNet peering,
+  app→database links, and standalone VM scale set → subnet nesting
+  (candidates: `az vmss list` network profiles, `az network lb list`, or
+  Azure Resource Graph).
 - **Azure is the only live provider.**
 - **No CI.** fmt/clippy/test are manual. First recommended task below.
 - **No PNG export, no saved snapshots / drift comparison.**

@@ -150,6 +150,16 @@ pub struct AzSshKey {
     pub public_key: Option<String>,
 }
 
+/// One entry of `az aks list` (Microsoft.ContainerService/managedClusters).
+/// Only the node resource group is read — that `MC_...` group holds all the
+/// cluster's managed infrastructure (VM scale sets, load balancers, IPs).
+#[derive(Debug, Clone, Deserialize)]
+pub struct AzAksCluster {
+    pub id: String,
+    #[serde(default, rename = "nodeResourceGroup")]
+    pub node_resource_group: Option<String>,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct AzIdRef {
     #[serde(default)]

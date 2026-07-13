@@ -116,6 +116,8 @@ impl super::CloudProvider for AzureProvider {
             self.try_list(&with_scope(&["vm", "list"], &scope_args), &mut warnings);
         let sshkeys: Vec<AzSshKey> =
             self.try_list(&with_scope(&["sshkey", "list"], &scope_args), &mut warnings);
+        let aks: Vec<AzAksCluster> =
+            self.try_list(&with_scope(&["aks", "list"], &scope_args), &mut warnings);
 
         Ok(build_topology(AzureInventory {
             account,
@@ -126,6 +128,7 @@ impl super::CloudProvider for AzureProvider {
             webapps,
             vms,
             sshkeys,
+            aks,
             warnings,
         }))
     }

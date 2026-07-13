@@ -14,6 +14,7 @@ pub struct AzureInventory {
     pub webapps: Vec<AzWebApp>,
     pub vms: Vec<AzVm>,
     pub sshkeys: Vec<AzSshKey>,
+    pub aks: Vec<AzAksCluster>,
     pub warnings: Vec<String>,
 }
 
@@ -568,6 +569,43 @@ pub fn build_topology(inv: AzureInventory) -> Topology {
         }
     }
 
+    // AKS node resource groups: a cluster's `MC_...` node RG holds all its
+    // managed infrastructure — VM scale sets, load balancers, public IPs,
+    // NSGs. Nest every resource in that RG inside the cluster, which becomes
+    // a container box, so the Kubernetes infra reads as one unit instead of
+    // scattering across the canvas (and out of the detached boxes).
+    let node_rg_to_aks: HashMap<String, String> = inv
+        .aks
+        .iter()
+        .filter_map(|c| {
+            let nrg = c.node_resource_group.as_deref().filter(|g| !g.is_empty())?;
+            let id = norm(&c.id);
+            index.contains_key(&id).then(|| (nrg.to_lowercase(), id))
+        })
+        .collect();
+    if !node_rg_to_aks.is_empty() {
+        let mut nested: Vec<(usize, String)> = Vec::new();
+        for (i, node) in nodes.iter().enumerate() {
+            if node.parent_id.is_some() {
+                continue;
+            }
+            let Some(rg) = node.group.as_deref() else {
+                continue;
+            };
+            if let Some(aks_id) = node_rg_to_aks.get(&rg.to_lowercase()) {
+                if node.id != *aks_id {
+                    nested.push((i, aks_id.clone()));
+                }
+            }
+        }
+        for (i, aks_id) in nested {
+            nodes[i].parent_id = Some(aks_id.clone());
+            if let Some(&ai) = index.get(&aks_id) {
+                nodes[ai].container = true;
+            }
+        }
+    }
+
     let mut topology = Topology {
         provider: "azure".into(),
         scope_id: inv.account.id.clone(),
@@ -607,6 +645,7 @@ mod tests {
             webapps: serde_json::from_str(include_str!("fixtures/webapps.json")).unwrap(),
             vms: serde_json::from_str(include_str!("fixtures/vms.json")).unwrap(),
             sshkeys: serde_json::from_str(include_str!("fixtures/sshkeys.json")).unwrap(),
+            aks: serde_json::from_str(include_str!("fixtures/aks.json")).unwrap(),
             warnings: Vec::new(),
         })
     }
@@ -790,6 +829,27 @@ mod tests {
         );
         // A webapp whose site/plan never appeared in the listings is skipped.
         assert!(!t.nodes.iter().any(|n| n.name == "app-ghost"));
+    }
+
+    #[test]
+    fn aks_node_resource_group_nests_in_the_cluster() {
+        let t = build();
+        let aks = find(&t, "aks-rex");
+        assert!(aks.container, "AKS cluster should become a container");
+        assert_eq!(aks.kind_label, "AKS cluster");
+        // Everything in MC_rg-app_aks-rex_eastus2 nests inside the cluster.
+        for name in ["aks-nodepool1-vmss", "kubernetes-lb-ip"] {
+            assert_eq!(
+                find(&t, name).parent_id.as_deref(),
+                Some(aks.id.as_str()),
+                "{name} should nest in the AKS cluster"
+            );
+        }
+        let vmss = find(&t, "aks-nodepool1-vmss");
+        assert_eq!(vmss.category, ResourceCategory::Compute);
+        assert_eq!(vmss.kind_label, "VM scale set");
+        // The AKS load-balancer public IP nested here, not in a detached box.
+        assert!(!t.nodes.iter().any(|n| n.name == "Public IP addresses"));
     }
 
     #[test]
