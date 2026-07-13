@@ -70,6 +70,11 @@ pub fn type_label(resource_type: &str) -> String {
         ("microsoft.compute/virtualmachinescalesets", "VM scale set"),
         ("microsoft.compute/disks", "Managed disk"),
         ("microsoft.compute/sshpublickeys", "SSH public key"),
+        (
+            "microsoft.compute/restorepointcollections",
+            "Restore point collection",
+        ),
+        ("microsoft.network/networkwatchers", "Network Watcher"),
         ("microsoft.compute/snapshots", "Snapshot"),
         ("microsoft.compute/images", "Image"),
         ("microsoft.network/virtualnetworks", "Virtual network"),
@@ -850,6 +855,29 @@ mod tests {
         assert_eq!(vmss.kind_label, "VM scale set");
         // The AKS load-balancer public IP nested here, not in a detached box.
         assert!(!t.nodes.iter().any(|n| n.name == "Public IP addresses"));
+    }
+
+    #[test]
+    fn network_watchers_and_restore_points_gather_into_detached_boxes() {
+        let t = build();
+        // Curated labels rather than the raw de-camel-cased type segment.
+        let nw = find(&t, "NetworkWatcher_westeurope");
+        assert_eq!(nw.kind_label, "Network Watcher");
+        assert_eq!(nw.category, ResourceCategory::Network);
+        let rpc = find(&t, "rpc-vm-web-01");
+        assert_eq!(rpc.kind_label, "Restore point collection");
+        assert_eq!(rpc.category, ResourceCategory::Compute);
+
+        // Both nest inside their respective detached container boxes.
+        for (group, member) in [
+            ("Network Watchers", "NetworkWatcher_westeurope"),
+            ("Restore point collections", "rpc-vm-web-01"),
+        ] {
+            let g = find(&t, group);
+            assert!(g.container, "{group} should be a container");
+            assert_eq!(g.kind_label, "Detached");
+            assert_eq!(find(&t, member).parent_id.as_deref(), Some(g.id.as_str()));
+        }
     }
 
     #[test]

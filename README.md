@@ -56,10 +56,11 @@ cargo run -- --export-svg topo.svg --provider azure      # your live estate
   Hardware rows come first; credentials/reachability (SSH keys with a red
   key glyph, public IPs with a green globe) sit below their own separator,
   with a link icon when shared across nodes (an SSH key on several VMs).
-  Unused keys, unattached disks, and unattached IPs stay visible, gathered
-  into dashed "Detached …" boxes (styled like a virtual network) instead of
-  scattering across the canvas. Remaining relationships (NSG → subnet/VM,
-  app → db, …) route as relaxed beziers.
+  Unused keys, unattached disks and IPs, and always-standalone service
+  resources (network watchers, VM restore point collections) stay visible,
+  gathered into dashed "Detached …" boxes (styled like a virtual network)
+  instead of scattering across the canvas. Remaining relationships
+  (NSG → subnet/VM, app → db, …) route as relaxed beziers.
 - Pan (drag), zoom (scroll, cursor-anchored), fit-to-view, clickable minimap,
   light/dark themes, fullscreen (F11), details panel per resource.
 - Degrades gracefully: CLI missing → install guidance; signed out →

@@ -357,6 +357,23 @@ pub fn demo_topology() -> Topology {
             Network,
             vec![("ipAddress", "20.86.14.9")],
         ),
+        // Regional / management resources that never connect to anything.
+        leaf(
+            "NetworkWatcherRG",
+            "nw-westeurope",
+            "Microsoft.Network/networkWatchers",
+            "Network Watcher",
+            Network,
+            vec![],
+        ),
+        leaf(
+            "rg-app",
+            "rpc-vm-web-01",
+            "Microsoft.Compute/restorePointCollections",
+            "Restore point collection",
+            Compute,
+            vec![],
+        ),
         leaf(
             "rg-ops",
             "id-workload",
@@ -577,6 +594,8 @@ mod tests {
             ("SSH public keys", "key-legacy"),
             ("Managed disks", "disk-decom"),
             ("Public IP addresses", "pip-reserved"),
+            ("Network Watchers", "nw-westeurope"),
+            ("Restore point collections", "rpc-vm-web-01"),
         ] {
             let g = by_name(group);
             assert!(g.container, "{group} should be a container");

@@ -144,9 +144,12 @@ pub struct Topology {
 
 /// Presentation post-pass shared by all providers: gather detached leaves of
 /// well-known kinds into dashed "Detached …" container boxes (styled like a
-/// virtual network) so they don't scatter across the canvas. Only kinds
-/// whose attached instances fold into owner cards are grouped — a top-level
-/// card of these kinds remaining after mapping is genuinely unused.
+/// virtual network) so they don't scatter across the canvas. Two families
+/// qualify: kinds whose attached instances fold into owner cards (so a
+/// remaining top-level one is genuinely unused — an orphaned disk, an unused
+/// SSH key, an unassociated public IP), and regional/management resources
+/// that are never topologically connected (network watchers, VM restore
+/// point collections).
 pub fn group_detached(topology: &mut Topology) {
     const GROUPS: &[(&str, &str, ResourceCategory)] = &[
         (
@@ -159,6 +162,16 @@ pub fn group_detached(topology: &mut Topology) {
             "Public IP address",
             "Public IP addresses",
             ResourceCategory::Network,
+        ),
+        (
+            "Network Watcher",
+            "Network Watchers",
+            ResourceCategory::Network,
+        ),
+        (
+            "Restore point collection",
+            "Restore point collections",
+            ResourceCategory::Compute,
         ),
     ];
     for (kind_label, plural, category) in GROUPS {
