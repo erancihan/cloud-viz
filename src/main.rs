@@ -21,7 +21,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .ok_or("--export-svg requires an output path")?;
         let provider_id = flag_value(&args, "--provider").unwrap_or("demo");
         let scope = flag_value(&args, "--scope");
-        let theme = if args.iter().any(|a| a == "--light") { theme::LIGHT } else { theme::DARK };
+        let theme = if args.iter().any(|a| a == "--light") {
+            theme::LIGHT
+        } else {
+            theme::DARK
+        };
 
         let providers = providers::builtin_providers();
         let provider = providers

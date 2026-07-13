@@ -22,7 +22,11 @@ pub fn to_svg(topology: &Topology, theme: &Theme) -> String {
         svg,
         r#"<svg xmlns="http://www.w3.org/2000/svg" width="{w:.0}" height="{h:.0}" viewBox="0 0 {w:.0} {h:.0}" font-family="system-ui, -apple-system, 'Segoe UI', sans-serif">"#
     );
-    let _ = write!(svg, r#"<rect width="{w:.0}" height="{h:.0}" fill="{}"/>"#, theme.plane.hex());
+    let _ = write!(
+        svg,
+        r#"<rect width="{w:.0}" height="{h:.0}" fill="{}"/>"#,
+        theme.plane.hex()
+    );
 
     // Containers first, then edges, then cards on top so loose curves never
     // obscure node content.
@@ -34,75 +38,129 @@ pub fn to_svg(topology: &Topology, theme: &Theme) -> String {
         let r = shift(placed.rect, ox, oy);
         let cat = theme.category_color(node.category);
         let is_scope = node.category == ResourceCategory::Scope;
-        let fill = if is_scope { theme.surface } else { mix(cat, theme.surface, 0.05) };
+        let fill = if is_scope {
+            theme.surface
+        } else {
+            mix(cat, theme.surface, 0.05)
+        };
         let stroke = if is_scope { theme.hairline } else { cat };
-        let dash = if is_scope { "" } else { r#" stroke-dasharray="7 6""# };
+        let dash = if is_scope {
+            ""
+        } else {
+            r#" stroke-dasharray="7 6""#
+        };
         let stroke_opacity = if is_scope { 1.0 } else { 0.5 };
         let _ = write!(
             svg,
             r#"<rect x="{:.1}" y="{:.1}" width="{:.1}" height="{:.1}" rx="14" fill="{}" stroke="{}" stroke-opacity="{stroke_opacity}" stroke-width="1.5"{dash}/>"#,
-            r.x, r.y, r.w, r.h, fill.hex(), stroke.hex()
+            r.x,
+            r.y,
+            r.w,
+            r.h,
+            fill.hex(),
+            stroke.hex()
         );
         let _ = write!(
             svg,
             r#"<text x="{:.1}" y="{:.1}" font-size="10.5" font-weight="700" letter-spacing="0.6" fill="{}">{}</text>"#,
-            r.x + 18.0, r.y + 24.0, cat.hex(), escape(&node.kind_label.to_uppercase())
+            r.x + 18.0,
+            r.y + 24.0,
+            cat.hex(),
+            escape(&node.kind_label.to_uppercase())
         );
         // ~8.4px per uppercase character at 10.5px bold with letter-spacing.
         let _ = write!(
             svg,
             r#"<text x="{:.1}" y="{:.1}" font-size="14" font-weight="650" fill="{}">{}</text>"#,
-            r.x + 18.0 + node.kind_label.chars().count() as f32 * 8.4 + 14.0, r.y + 25.0, theme.ink.hex(), escape(&node.name)
+            r.x + 18.0 + node.kind_label.chars().count() as f32 * 8.4 + 14.0,
+            r.y + 25.0,
+            theme.ink.hex(),
+            escape(&node.name)
         );
         if placed.child_count > 0 {
             let _ = write!(
                 svg,
                 r#"<text x="{:.1}" y="{:.1}" font-size="11" fill="{}" text-anchor="end">{}</text>"#,
-                r.right() - 16.0, r.y + 24.0, theme.ink_3.hex(), placed.child_count
+                r.right() - 16.0,
+                r.y + 24.0,
+                theme.ink_3.hex(),
+                placed.child_count
             );
         } else {
             let _ = write!(
                 svg,
                 r#"<text x="{:.1}" y="{:.1}" font-size="11.5" fill="{}">No resources</text>"#,
-                r.x + 18.0, r.y + 46.0, theme.ink_3.hex()
+                r.x + 18.0,
+                r.y + 46.0,
+                theme.ink_3.hex()
             );
         }
     }
 
     for (edge_index, edge) in topology.edges.iter().enumerate() {
-        let (Some(&si), Some(&ti)) = (layout.by_id.get(&edge.source), layout.by_id.get(&edge.target)) else {
+        let (Some(&si), Some(&ti)) = (
+            layout.by_id.get(&edge.source),
+            layout.by_id.get(&edge.target),
+        ) else {
             continue;
         };
         let path = route_edge(
             &shift(layout.placed[si].rect, ox, oy),
             &shift(layout.placed[ti].rect, ox, oy),
         );
-        let dash = if edge.kind == EdgeKind::Network { r#" stroke-dasharray="7 5""# } else { "" };
+        let dash = if edge.kind == EdgeKind::Network {
+            r#" stroke-dasharray="7 5""#
+        } else {
+            ""
+        };
         let _ = write!(
             svg,
             r#"<path d="M {:.1} {:.1} C {:.1} {:.1}, {:.1} {:.1}, {:.1} {:.1}" fill="none" stroke="{}" stroke-width="1.6"{dash}/>"#,
-            path.p0.x, path.p0.y, path.c0.x, path.c0.y, path.c1.x, path.c1.y, path.p1.x, path.p1.y,
+            path.p0.x,
+            path.p0.y,
+            path.c0.x,
+            path.c0.y,
+            path.c1.x,
+            path.c1.y,
+            path.p1.x,
+            path.p1.y,
             theme.edge.hex()
         );
         let head = path.arrow_head(11.0);
         let _ = write!(
             svg,
             r#"<polygon points="{:.1},{:.1} {:.1},{:.1} {:.1},{:.1}" fill="{}"/>"#,
-            head[0].x, head[0].y, head[1].x, head[1].y, head[2].x, head[2].y, theme.edge.hex()
+            head[0].x,
+            head[0].y,
+            head[1].x,
+            head[1].y,
+            head[2].x,
+            head[2].y,
+            theme.edge.hex()
         );
         if let Some(label) = &edge.label {
-            let t = if path.loop_under { 0.5 } else { label_t(edge_index) };
+            let t = if path.loop_under {
+                0.5
+            } else {
+                label_t(edge_index)
+            };
             let mid = path.point_at(t);
             let half_w = label.len() as f32 * 2.9 + 6.0;
             let _ = write!(
                 svg,
                 r#"<rect x="{:.1}" y="{:.1}" width="{:.1}" height="15" rx="4" fill="{}" fill-opacity="0.92"/>"#,
-                mid.x - half_w, mid.y - 7.5, half_w * 2.0, theme.surface.hex()
+                mid.x - half_w,
+                mid.y - 7.5,
+                half_w * 2.0,
+                theme.surface.hex()
             );
             let _ = write!(
                 svg,
                 r#"<text x="{:.1}" y="{:.1}" font-size="10" fill="{}" text-anchor="middle">{}</text>"#,
-                mid.x, mid.y + 3.5, theme.ink_3.hex(), escape(label)
+                mid.x,
+                mid.y + 3.5,
+                theme.ink_3.hex(),
+                escape(label)
             );
         }
     }
@@ -117,13 +175,21 @@ pub fn to_svg(topology: &Topology, theme: &Theme) -> String {
         let _ = write!(
             svg,
             r#"<rect x="{:.1}" y="{:.1}" width="{:.1}" height="{:.1}" rx="10" fill="{}" stroke="{}" stroke-width="1"/>"#,
-            r.x, r.y, r.w, r.h, theme.card.hex(), theme.hairline.hex()
+            r.x,
+            r.y,
+            r.w,
+            r.h,
+            theme.card.hex(),
+            theme.hairline.hex()
         );
         // category accent bar
         let _ = write!(
             svg,
             r#"<rect x="{:.1}" y="{:.1}" width="3.5" height="{:.1}" rx="1.75" fill="{}"/>"#,
-            r.x + 1.0, r.y + 6.0, r.h - 12.0, cat.hex()
+            r.x + 1.0,
+            r.y + 6.0,
+            r.h - 12.0,
+            cat.hex()
         );
         // icon chip + glyph
         let chip = 32.0;
@@ -136,18 +202,25 @@ pub fn to_svg(topology: &Topology, theme: &Theme) -> String {
         let _ = write!(
             svg,
             r#"<g transform="translate({:.1},{:.1})" stroke="{}" stroke-width="1.5" fill="none" stroke-linecap="round" stroke-linejoin="round">{}</g>"#,
-            cx + 8.0, cy + 8.0, cat.hex(), glyph_svg(node.category, cat)
+            cx + 8.0,
+            cy + 8.0,
+            cat.hex(),
+            glyph_svg(node.category, cat)
         );
         let tx = cx + chip + 12.0;
         let _ = write!(
             svg,
             r#"<text x="{tx:.1}" y="{:.1}" font-size="12.5" font-weight="600" fill="{}">{}</text>"#,
-            r.y + r.h / 2.0 - 4.0, theme.ink.hex(), escape(&truncate(&node.name, 24))
+            r.y + r.h / 2.0 - 4.0,
+            theme.ink.hex(),
+            escape(&truncate(&node.name, 24))
         );
         let _ = write!(
             svg,
             r#"<text x="{tx:.1}" y="{:.1}" font-size="11" fill="{}">{}</text>"#,
-            r.y + r.h / 2.0 + 12.0, theme.ink_3.hex(), escape(&truncate(&node.kind_label, 26))
+            r.y + r.h / 2.0 + 12.0,
+            theme.ink_3.hex(),
+            escape(&truncate(&node.kind_label, 26))
         );
     }
 
@@ -156,7 +229,11 @@ pub fn to_svg(topology: &Topology, theme: &Theme) -> String {
 }
 
 fn shift(r: Rect, ox: f32, oy: f32) -> Rect {
-    Rect { x: r.x + ox, y: r.y + oy, ..r }
+    Rect {
+        x: r.x + ox,
+        y: r.y + oy,
+        ..r
+    }
 }
 
 fn truncate(s: &str, max: usize) -> String {
@@ -170,7 +247,9 @@ fn truncate(s: &str, max: usize) -> String {
 }
 
 fn escape(s: &str) -> String {
-    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
 }
 
 /// 16x16 line glyphs, one per category (mirrors the in-app painter glyphs).

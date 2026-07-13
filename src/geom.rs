@@ -83,7 +83,8 @@ pub fn route_edge(source: &Rect, target: &Rect) -> EdgePath {
     // and its label land in the horizontal corridor below the pair. The dip
     // (~0.75 × reach) stays shallower than the inter-row gap so the loop
     // never reaches the next row of cards.
-    let horizontal = matches!(s_side, Side::Left | Side::Right) && matches!(t_side, Side::Left | Side::Right);
+    let horizontal =
+        matches!(s_side, Side::Left | Side::Right) && matches!(t_side, Side::Left | Side::Right);
     let loop_under = horizontal && dist < 80.0;
     if loop_under {
         s_side = Side::Bottom;
@@ -94,10 +95,26 @@ pub fn route_edge(source: &Rect, target: &Rect) -> EdgePath {
     let p1 = t_side.anchor(target);
 
     // Relaxed curvature: control points push well away from the node sides.
-    let reach = if loop_under { 28.0 } else { (dist * 0.35).clamp(56.0, 280.0) };
-    let c0 = Vec2::new(p0.x + s_side.normal().x * reach, p0.y + s_side.normal().y * reach);
-    let c1 = Vec2::new(p1.x + t_side.normal().x * reach, p1.y + t_side.normal().y * reach);
-    EdgePath { p0, c0, c1, p1, loop_under }
+    let reach = if loop_under {
+        28.0
+    } else {
+        (dist * 0.35).clamp(56.0, 280.0)
+    };
+    let c0 = Vec2::new(
+        p0.x + s_side.normal().x * reach,
+        p0.y + s_side.normal().y * reach,
+    );
+    let c1 = Vec2::new(
+        p1.x + t_side.normal().x * reach,
+        p1.y + t_side.normal().y * reach,
+    );
+    EdgePath {
+        p0,
+        c0,
+        c1,
+        p1,
+        loop_under,
+    }
 }
 
 /// Label position along an edge. Near-parallel edges (same target, similar
@@ -148,18 +165,33 @@ impl EdgePath {
 mod tests {
     use super::*;
 
-    const A: Rect = Rect { x: 0.0, y: 0.0, w: 100.0, h: 50.0 };
+    const A: Rect = Rect {
+        x: 0.0,
+        y: 0.0,
+        w: 100.0,
+        h: 50.0,
+    };
 
     #[test]
     fn routes_to_facing_sides() {
         // Target directly to the right: leave from source's right, enter target's left.
-        let b = Rect { x: 300.0, y: 0.0, w: 100.0, h: 50.0 };
+        let b = Rect {
+            x: 300.0,
+            y: 0.0,
+            w: 100.0,
+            h: 50.0,
+        };
         let path = route_edge(&A, &b);
         assert_eq!(path.p0, Vec2::new(100.0, 25.0));
         assert_eq!(path.p1, Vec2::new(300.0, 25.0));
 
         // Target below: leave from bottom, enter top.
-        let c = Rect { x: 0.0, y: 300.0, w: 100.0, h: 50.0 };
+        let c = Rect {
+            x: 0.0,
+            y: 300.0,
+            w: 100.0,
+            h: 50.0,
+        };
         let path = route_edge(&A, &c);
         assert_eq!(path.p0, Vec2::new(50.0, 50.0));
         assert_eq!(path.p1, Vec2::new(50.0, 300.0));
@@ -167,7 +199,12 @@ mod tests {
 
     #[test]
     fn control_points_leave_room() {
-        let b = Rect { x: 500.0, y: 400.0, w: 100.0, h: 50.0 };
+        let b = Rect {
+            x: 500.0,
+            y: 400.0,
+            w: 100.0,
+            h: 50.0,
+        };
         let path = route_edge(&A, &b);
         // Controls push outward from the chosen sides by at least the minimum reach.
         assert!((path.c0.x - path.p0.x).abs() + (path.c0.y - path.p0.y).abs() >= 56.0);
@@ -177,11 +214,24 @@ mod tests {
     #[test]
     fn adjacent_cards_loop_underneath() {
         // 36px apart side by side — no room for a label between them.
-        let b = Rect { x: 136.0, y: 0.0, w: 100.0, h: 50.0 };
+        let b = Rect {
+            x: 136.0,
+            y: 0.0,
+            w: 100.0,
+            h: 50.0,
+        };
         let path = route_edge(&A, &b);
         assert!(path.loop_under);
-        assert_eq!(path.p0, Vec2::new(50.0, 50.0), "source anchor should be bottom");
-        assert_eq!(path.p1, Vec2::new(186.0, 50.0), "target anchor should be bottom");
+        assert_eq!(
+            path.p0,
+            Vec2::new(50.0, 50.0),
+            "source anchor should be bottom"
+        );
+        assert_eq!(
+            path.p1,
+            Vec2::new(186.0, 50.0),
+            "target anchor should be bottom"
+        );
         // The curve dips below the cards but stays shallower than the 36px
         // inter-row gap, so it never touches the next row.
         let dip = path.point_at(0.5).y - 50.0;
@@ -190,7 +240,12 @@ mod tests {
 
     #[test]
     fn flatten_spans_endpoints() {
-        let b = Rect { x: 300.0, y: 200.0, w: 100.0, h: 50.0 };
+        let b = Rect {
+            x: 300.0,
+            y: 200.0,
+            w: 100.0,
+            h: 50.0,
+        };
         let path = route_edge(&A, &b);
         let pts = path.flatten(24);
         assert_eq!(pts.len(), 25);
