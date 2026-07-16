@@ -2,6 +2,7 @@
 
 mod app;
 mod cache;
+mod config;
 mod export;
 mod geom;
 mod layout;
@@ -33,7 +34,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .iter()
             .find(|p| p.info().id == provider_id)
             .ok_or_else(|| format!("unknown provider: {provider_id}"))?;
-        let topology = provider.fetch_topology(scope)?;
+        let topology = provider.fetch_topology(scope, model::CostPeriod::MonthToDate)?;
         std::fs::write(path, export::to_svg(&topology, &theme))?;
         eprintln!(
             "wrote {} ({} nodes, {} edges)",

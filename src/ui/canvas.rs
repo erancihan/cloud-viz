@@ -7,8 +7,8 @@ use crate::model::{format_cost, EdgeKind, ResourceCategory, Topology};
 use crate::theme::{mix, Theme};
 use crate::ui::{c32, c32a, glyphs};
 use eframe::egui::{
-    Align2, Color32, CursorIcon, FontId, Painter, Pos2, Rect, Response, Sense, Shape, Stroke,
-    StrokeKind, Ui, Vec2,
+    Align2, Button, Color32, CursorIcon, FontId, Painter, Pos2, Rect, Response, Sense, Shape,
+    Stroke, StrokeKind, Ui, Vec2,
 };
 
 pub struct Camera {
@@ -36,6 +36,11 @@ pub struct CanvasOutput {
 
 const MINIMAP_SIZE: Vec2 = Vec2::new(200.0, 140.0);
 const MINIMAP_MARGIN: f32 = 14.0;
+/// Zoom in/out buttons stacked above the minimap in the bottom-right corner.
+const ZOOM_BTN: f32 = 26.0;
+const ZOOM_BTN_GAP: f32 = 6.0;
+/// Per click; scroll zoom stays continuous.
+const ZOOM_STEP: f32 = 1.25;
 
 pub fn show(
     ui: &mut Ui,
@@ -68,7 +73,23 @@ pub fn show(
         .hover_pos()
         .is_some_and(|p| minimap_rect.contains(p));
 
-    handle_camera_input(ui, camera, &response, rect, pointer_over_minimap);
+    // Zoom buttons live just above the minimap; like it, they mask the
+    // canvas underneath from hover/click/scroll.
+    let btn_x = rect.right() - MINIMAP_MARGIN - ZOOM_BTN;
+    let zoom_out_rect = Rect::from_min_size(
+        Pos2::new(btn_x, minimap_rect.top() - MINIMAP_MARGIN - ZOOM_BTN),
+        Vec2::splat(ZOOM_BTN),
+    );
+    let zoom_in_rect = Rect::from_min_size(
+        Pos2::new(btn_x, zoom_out_rect.top() - ZOOM_BTN_GAP - ZOOM_BTN),
+        Vec2::splat(ZOOM_BTN),
+    );
+    let pointer_over_ui = pointer_over_minimap
+        || response
+            .hover_pos()
+            .is_some_and(|p| zoom_in_rect.union(zoom_out_rect).contains(p));
+
+    handle_camera_input(ui, camera, &response, rect, pointer_over_ui);
 
     // Copy out the camera transform so the closures don't hold a borrow on
     // `camera` (the minimap interaction below mutates it for the next frame).
@@ -80,7 +101,7 @@ pub fn show(
         Rect::from_min_max(to_screen(r.x, r.y), to_screen(r.right(), r.bottom()))
     };
 
-    let hovered = if pointer_over_minimap {
+    let hovered = if pointer_over_ui {
         None
     } else {
         response
@@ -161,14 +182,26 @@ pub fn show(
         }
     }
 
-    let clicked_node = if response.clicked() && !pointer_over_minimap {
+    // The +/- buttons zoom about the viewport center (scroll zoom anchors on
+    // the cursor instead). Placed after all canvas painting so they sit on
+    // top of the cards.
+    for (label, btn_rect, factor) in [
+        ("+", zoom_in_rect, ZOOM_STEP),
+        ("−", zoom_out_rect, 1.0 / ZOOM_STEP),
+    ] {
+        if ui.put(btn_rect, Button::new(label)).clicked() {
+            zoom_about_center(camera, rect, factor);
+        }
+    }
+
+    let clicked_node = if response.clicked() && !pointer_over_ui {
         response
             .interact_pointer_pos()
             .and_then(|p| hit_test(p, layout, &world_rect))
     } else {
         None
     };
-    let clicked_background = response.clicked() && !pointer_over_minimap && clicked_node.is_none();
+    let clicked_background = response.clicked() && !pointer_over_ui && clicked_node.is_none();
 
     CanvasOutput {
         clicked_node: clicked_node.map(|i| layout.placed[i].index),
@@ -201,6 +234,16 @@ fn handle_camera_input(
             }
         }
     }
+}
+
+/// Zoom by `factor` keeping the viewport center fixed — the +/- buttons'
+/// behavior. Same clamp as scroll zoom.
+fn zoom_about_center(camera: &mut Camera, rect: Rect, factor: f32) {
+    let new_zoom = (camera.zoom * factor).clamp(0.05, 2.5);
+    let center = rect.center() - rect.min;
+    let world = (center - camera.pan) / camera.zoom;
+    camera.pan = center - world * new_zoom;
+    camera.zoom = new_zoom;
 }
 
 pub fn fit(camera: &mut Camera, rect: Rect, layout: &Layout) {

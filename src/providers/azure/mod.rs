@@ -2,7 +2,9 @@ mod az_types;
 mod cli;
 mod mapper;
 
-use crate::model::{ProviderError, ProviderInfo, ProviderStatus, ScopeOption, Topology};
+use crate::model::{
+    days_in_month, CostPeriod, ProviderError, ProviderInfo, ProviderStatus, ScopeOption, Topology,
+};
 use az_types::*;
 use cli::{az_json, AzExecutor, RealAzExecutor};
 use mapper::{build_topology, AzureInventory};
@@ -77,7 +79,11 @@ impl super::CloudProvider for AzureProvider {
         Ok(scopes)
     }
 
-    fn fetch_topology(&self, scope_id: Option<&str>) -> Result<Topology, ProviderError> {
+    fn fetch_topology(
+        &self,
+        scope_id: Option<&str>,
+        period: CostPeriod,
+    ) -> Result<Topology, ProviderError> {
         let mut scope_args: Vec<&str> = Vec::new();
         if let Some(id) = scope_id {
             scope_args.extend(["--subscription", id]);
@@ -147,7 +153,7 @@ impl super::CloudProvider for AzureProvider {
             ));
         }
 
-        let costs = self.fetch_costs(&account.id, &mut warnings);
+        let costs = self.fetch_costs(&account.id, period, &mut warnings);
 
         Ok(build_topology(AzureInventory {
             account,
@@ -166,20 +172,40 @@ impl super::CloudProvider for AzureProvider {
     }
 }
 
-/// Cost Management query: month-to-date actual cost per resource, one POST
-/// for the whole subscription. `az` has no built-in command for this API
-/// (`az costmanagement` is an extension), so go through `az rest`, which
-/// reuses the CLI's login.
-const COST_QUERY_BODY: &str = r#"{"type":"ActualCost","timeframe":"MonthToDate","dataset":{"granularity":"None","aggregation":{"totalCost":{"name":"Cost","function":"Sum"}},"grouping":[{"type":"Dimension","name":"ResourceId"}]}}"#;
+/// Cost Management query body: actual cost per resource over the selected
+/// period — the current month so far, or one whole past calendar month.
+fn cost_query_body(period: CostPeriod) -> String {
+    const DATASET: &str = r#""dataset":{"granularity":"None","aggregation":{"totalCost":{"name":"Cost","function":"Sum"}},"grouping":[{"type":"Dimension","name":"ResourceId"}]}"#;
+    match period {
+        CostPeriod::MonthToDate => {
+            format!(r#"{{"type":"ActualCost","timeframe":"MonthToDate",{DATASET}}}"#)
+        }
+        CostPeriod::Month { year, month } => {
+            let last = days_in_month(year, month);
+            format!(
+                r#"{{"type":"ActualCost","timeframe":"Custom","timePeriod":{{"from":"{year:04}-{month:02}-01T00:00:00Z","to":"{year:04}-{month:02}-{last:02}T23:59:59Z"}},{DATASET}}}"#
+            )
+        }
+    }
+}
 
 impl AzureProvider {
-    /// Best-effort: needs the Cost Management Reader role and the API
-    /// throttles aggressively, so failures become a warning and the topology
-    /// simply renders without cost badges.
-    fn fetch_costs(&self, subscription_id: &str, warnings: &mut Vec<String>) -> Vec<AzCostRow> {
+    /// One Cost Management POST for the whole subscription. `az` has no
+    /// built-in command for this API (`az costmanagement` is an extension),
+    /// so go through `az rest`, which reuses the CLI's login. Best-effort:
+    /// needs the Cost Management Reader role and the API throttles
+    /// aggressively, so failures become a warning and the topology simply
+    /// renders without cost badges.
+    fn fetch_costs(
+        &self,
+        subscription_id: &str,
+        period: CostPeriod,
+        warnings: &mut Vec<String>,
+    ) -> Vec<AzCostRow> {
         let url = format!(
-            "https://management.azure.com/subscriptions/{subscription_id}/providers/Microsoft.CostManagement/query?api-version=2023-03-11"
+            "https://management.azure.com/subscriptions/{subscription_id}/providers/Microsoft.CostManagement/query?api-version=2024-08-01"
         );
+        let body = cost_query_body(period);
         let args = [
             "rest",
             "--method",
@@ -189,7 +215,7 @@ impl AzureProvider {
             "--headers",
             "Content-Type=application/json",
             "--body",
-            COST_QUERY_BODY,
+            &body,
         ];
         match az_json::<AzCostQueryResponse>(self.exec.as_ref(), &args) {
             Ok(response) => {
@@ -204,6 +230,34 @@ impl AzureProvider {
                 warnings.push(format!("cost query failed: {}", e.message));
                 Vec::new()
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cost_query_body_covers_both_timeframes() {
+        let mtd = cost_query_body(CostPeriod::MonthToDate);
+        assert!(mtd.contains(r#""timeframe":"MonthToDate""#));
+        assert!(!mtd.contains("timePeriod"));
+
+        // A whole past month becomes a Custom window over its exact days —
+        // February 2024 is a leap month.
+        let feb = cost_query_body(CostPeriod::Month {
+            year: 2024,
+            month: 2,
+        });
+        assert!(feb.contains(r#""timeframe":"Custom""#));
+        assert!(feb.contains(r#""from":"2024-02-01T00:00:00Z""#));
+        assert!(feb.contains(r#""to":"2024-02-29T23:59:59Z""#));
+
+        // Both carry the same per-resource aggregation.
+        for body in [&mtd, &feb] {
+            assert!(body.contains(r#""grouping":[{"type":"Dimension","name":"ResourceId"}]"#));
+            serde_json::from_str::<serde_json::Value>(body).expect("body is valid JSON");
         }
     }
 }

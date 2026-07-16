@@ -33,7 +33,11 @@ impl CloudProvider for DemoProvider {
         }])
     }
 
-    fn fetch_topology(&self, _scope_id: Option<&str>) -> Result<Topology, ProviderError> {
+    fn fetch_topology(
+        &self,
+        _scope_id: Option<&str>,
+        _period: CostPeriod,
+    ) -> Result<Topology, ProviderError> {
         Ok(demo_topology())
     }
 }

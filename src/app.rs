@@ -2,6 +2,7 @@
 //! workers, toolbar, details panel, and error guidance screens.
 
 use crate::cache;
+use crate::config;
 use crate::layout::{layout_topology, Layout};
 use crate::model::*;
 use crate::providers::{builtin_providers, CloudProvider};
@@ -52,13 +53,29 @@ pub struct CloudVizApp {
     fullscreen: bool,
     /// Some(age at load) when the current topology came from the disk cache.
     cache_age: Option<Duration>,
+    /// Billing window the cost badges cover; changing it re-fetches (each
+    /// period caches separately, so revisiting a month is instant).
+    cost_period: CostPeriod,
+    /// Last screen-zoom factor written to the config file, so Ctrl +/-
+    /// changes persist across sessions without rewriting every frame.
+    persisted_zoom: f32,
     tx: Sender<WorkerMsg>,
     rx: Receiver<WorkerMsg>,
     generation: u64,
 }
 
 impl CloudVizApp {
-    pub fn new(_cc: &eframe::CreationContext<'_>) -> Self {
+    pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
+        // Restore the persisted screen zoom (Ctrl +/-) from the last session.
+        let saved = config::load();
+        let persisted_zoom = saved
+            .zoom_factor
+            .map(|z| z.clamp(0.5, 3.0))
+            .unwrap_or_else(|| cc.egui_ctx.zoom_factor());
+        if saved.zoom_factor.is_some() {
+            cc.egui_ctx.set_zoom_factor(persisted_zoom);
+        }
+
         let (tx, rx) = channel();
         let providers = builtin_providers();
         let provider_idx = providers.iter().position(|p| !p.info().demo).unwrap_or(0);
@@ -76,6 +93,8 @@ impl CloudVizApp {
             camera: Camera::default(),
             fullscreen: false,
             cache_age: None,
+            cost_period: CostPeriod::MonthToDate,
+            persisted_zoom,
             tx,
             rx,
             generation: 0,
@@ -98,6 +117,7 @@ impl CloudVizApp {
         self.account_detail = None;
 
         let provider = Arc::clone(&self.providers[self.provider_idx]);
+        let period = self.cost_period;
         let tx = self.tx.clone();
         thread::spawn(move || {
             let repaint = || {
@@ -127,7 +147,7 @@ impl CloudVizApp {
             // Start-up prefers the on-disk cache over re-running the whole
             // CLI inventory; ⟳ Refresh fetches live.
             let info = provider.info();
-            let scope_key = default_scope.clone().unwrap_or_else(|| "default".into());
+            let scope_key = cache_key(default_scope.as_deref(), period);
             if !info.demo {
                 if let Some(hit) = cache::load(info.id, &scope_key) {
                     let _ = tx.send(WorkerMsg::Topology {
@@ -139,7 +159,7 @@ impl CloudVizApp {
                     return;
                 }
             }
-            let result = provider.fetch_topology(default_scope.as_deref());
+            let result = provider.fetch_topology(default_scope.as_deref(), period);
             if let (Ok(topology), false) = (&result, info.demo) {
                 cache::save(info.id, &scope_key, topology);
             }
@@ -162,10 +182,11 @@ impl CloudVizApp {
 
         let provider = Arc::clone(&self.providers[self.provider_idx]);
         let scope = self.scope_id.clone();
+        let period = self.cost_period;
         let tx = self.tx.clone();
         thread::spawn(move || {
             let info = provider.info();
-            let scope_key = scope.clone().unwrap_or_else(|| "default".into());
+            let scope_key = cache_key(scope.as_deref(), period);
             if !force && !info.demo {
                 if let Some(hit) = cache::load(info.id, &scope_key) {
                     let _ = tx.send(WorkerMsg::Topology {
@@ -177,7 +198,7 @@ impl CloudVizApp {
                     return;
                 }
             }
-            let result = provider.fetch_topology(scope.as_deref());
+            let result = provider.fetch_topology(scope.as_deref(), period);
             if let (Ok(topology), false) = (&result, info.demo) {
                 cache::save(info.id, &scope_key, topology);
             }
@@ -310,6 +331,35 @@ impl CloudVizApp {
                     self.scope_id = Some(id);
                     self.start_topology_fetch(ctx.clone(), false);
                 }
+            }
+
+            ui.add_space(8.0);
+            ui.label(
+                RichText::new("COSTS")
+                    .size(10.0)
+                    .color(c32(self.theme.ink_3)),
+            );
+            let mut new_period: Option<CostPeriod> = None;
+            ComboBox::from_id_salt("cost-period")
+                .selected_text(self.cost_period.label())
+                .show_ui(ui, |ui| {
+                    let (year, month) = current_year_month();
+                    let options =
+                        std::iter::once(CostPeriod::MonthToDate).chain((1..=12).map(|back| {
+                            let (year, month) = month_minus(year, month, back);
+                            CostPeriod::Month { year, month }
+                        }));
+                    for option in options {
+                        let is_current = option == self.cost_period;
+                        if ui.selectable_label(is_current, option.label()).clicked() && !is_current
+                        {
+                            new_period = Some(option);
+                        }
+                    }
+                });
+            if let Some(period) = new_period {
+                self.cost_period = period;
+                self.start_topology_fetch(ctx.clone(), false);
             }
 
             ui.add_space(8.0);
@@ -480,8 +530,9 @@ impl CloudVizApp {
                         row("Region", region, false);
                     }
                     row("Type", &node.kind, true);
-                    // Month-to-date spend — the card badge's number, broken
-                    // down into the resource itself vs. folded-in items.
+                    // The selected period's spend — the card badge's number,
+                    // broken down into the resource itself vs. folded-in
+                    // items.
                     if let Some(total) = node.total_cost() {
                         let attached: f64 = node.attachments.iter().filter_map(|a| a.cost).sum();
                         let mut value = format_cost(total, currency.as_deref());
@@ -492,7 +543,11 @@ impl CloudVizApp {
                                 format_cost(attached, currency.as_deref()),
                             );
                         }
-                        row("Cost (month to date)", &value, false);
+                        row(
+                            &format!("Cost · {}", self.cost_period.label()),
+                            &value,
+                            false,
+                        );
                     }
                     // Folded-in subsidiaries (disks, NICs, extensions, slots,
                     // SSH keys), grouped by kind in first-seen order.
@@ -666,6 +721,16 @@ impl eframe::App for CloudVizApp {
             self.set_fullscreen(ctx, !self.fullscreen);
         }
 
+        // Persist the screen zoom (Ctrl +/-, Ctrl 0) so the next session
+        // starts at the same zoom. Written only when it actually changes.
+        let zoom = ctx.zoom_factor();
+        if (zoom - self.persisted_zoom).abs() > 0.001 {
+            self.persisted_zoom = zoom;
+            config::save(&config::Config {
+                zoom_factor: Some(zoom),
+            });
+        }
+
         egui::TopBottomPanel::top("toolbar")
             .exact_height(44.0)
             .show(ctx, |ui| self.toolbar(ui, ctx));
@@ -681,6 +746,27 @@ impl eframe::App for CloudVizApp {
             ctx.request_repaint_after(std::time::Duration::from_millis(120));
         }
     }
+}
+
+/// On-disk cache key for a scope + cost-period pair. Month-to-date keeps the
+/// plain scope key, so caches written before period selection stay valid;
+/// each past month caches under its own key (its costs never change, so
+/// revisiting it is instant).
+fn cache_key(scope: Option<&str>, period: CostPeriod) -> String {
+    let scope = scope.unwrap_or("default");
+    match period.cache_suffix() {
+        Some(suffix) => format!("{scope}--{suffix}"),
+        None => scope.to_string(),
+    }
+}
+
+fn current_year_month() -> (i32, u32) {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let (year, month, _) = civil_from_unix(secs);
+    (year, month)
 }
 
 fn fmt_age(age: Duration) -> String {
