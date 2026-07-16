@@ -504,87 +504,103 @@ impl CloudVizApp {
                     ui.add_space(8.0);
                     ui.separator();
 
-                    let mut row = |key: &str, value: &str, mono: bool| {
-                        ui.add_space(6.0);
-                        ui.label(
-                            RichText::new(key.to_uppercase())
-                                .size(10.0)
-                                .color(c32(self.theme.ink_3)),
-                        );
-                        let text = if mono {
-                            RichText::new(value)
-                                .font(FontId::monospace(11.0))
-                                .color(c32(self.theme.ink_2))
-                        } else {
-                            RichText::new(value).color(c32(self.theme.ink))
-                        };
-                        ui.add(egui::Label::new(text).wrap());
-                        ui.add_space(6.0);
-                        ui.separator();
-                    };
+                    let theme = self.theme;
 
-                    if let Some(group) = &node.group {
-                        row("Resource group", group, false);
-                    }
-                    if let Some(region) = &node.region {
-                        row("Region", region, false);
-                    }
-                    row("Type", &node.kind, true);
-                    // The selected period's spend — the card badge's number,
-                    // broken down into the resource itself vs. folded-in
-                    // items.
-                    if let Some(total) = node.total_cost() {
-                        let attached: f64 = node.attachments.iter().filter_map(|a| a.cost).sum();
-                        let mut value = format_cost(total, currency.as_deref());
-                        if attached > 0.0 {
-                            value = format!(
-                                "{value}  ·  {} resource + {} attached",
-                                format_cost(total - attached, currency.as_deref()),
-                                format_cost(attached, currency.as_deref()),
-                            );
+                    // Collapsible sections (IntelliJ-style accordion), cost
+                    // breakdown at the bottom.
+                    section(ui, &theme, "Overview", |ui| {
+                        if let Some(group) = &node.group {
+                            detail_row(ui, &theme, "Resource group", group, false);
                         }
-                        row(
-                            &format!("Cost · {}", self.cost_period.label()),
-                            &value,
-                            false,
-                        );
-                    }
+                        if let Some(region) = &node.region {
+                            detail_row(ui, &theme, "Region", region, false);
+                        }
+                        detail_row(ui, &theme, "Type", &node.kind, true);
+                        detail_row(ui, &theme, "Resource id", &node.id, true);
+                    });
+
                     // Folded-in subsidiaries (disks, NICs, extensions, slots,
-                    // SSH keys), grouped by kind in first-seen order.
-                    let mut kinds: Vec<&str> = Vec::new();
-                    for att in &node.attachments {
-                        if !kinds.contains(&att.kind.as_str()) {
-                            kinds.push(&att.kind);
-                        }
+                    // SSH keys), grouped by kind in first-seen order. Their
+                    // costs live in the Cost section below.
+                    if !node.attachments.is_empty() {
+                        let title = format!("Attached resources ({})", node.attachments.len());
+                        section(ui, &theme, &title, |ui| {
+                            let mut kinds: Vec<&str> = Vec::new();
+                            for att in &node.attachments {
+                                if !kinds.contains(&att.kind.as_str()) {
+                                    kinds.push(&att.kind);
+                                }
+                            }
+                            for kind in kinds {
+                                let names: Vec<String> = node
+                                    .attachments
+                                    .iter()
+                                    .filter(|a| a.kind == kind)
+                                    .map(|a| {
+                                        if a.shared {
+                                            format!("{} (shared)", a.name)
+                                        } else {
+                                            a.name.clone()
+                                        }
+                                    })
+                                    .collect();
+                                detail_row(
+                                    ui,
+                                    &theme,
+                                    &format!("{kind}s ({})", names.len()),
+                                    &names.join("\n"),
+                                    false,
+                                );
+                            }
+                        });
                     }
-                    for kind in kinds {
-                        let names: Vec<String> = node
-                            .attachments
-                            .iter()
-                            .filter(|a| a.kind == kind)
-                            .map(|a| {
-                                let mut label = a.name.clone();
-                                if let Some(cost) = a.cost {
-                                    label = format!(
-                                        "{label} — {}",
-                                        format_cost(cost, currency.as_deref())
+
+                    if !node.metadata.is_empty() {
+                        section(ui, &theme, "Metadata", |ui| {
+                            for (key, value) in &node.metadata {
+                                detail_row(ui, &theme, key, value, false);
+                            }
+                        });
+                    }
+
+                    // The selected period's spend — the card badge's number,
+                    // itemized: the resource itself, then each folded-in
+                    // subsidiary that accrued cost, then the total.
+                    if let Some(total) = node.total_cost() {
+                        let currency = currency.as_deref();
+                        let title = format!("Cost · {}", self.cost_period.label());
+                        section(ui, &theme, &title, |ui| {
+                            ui.add_space(4.0);
+                            let costed: Vec<&Attachment> = node
+                                .attachments
+                                .iter()
+                                .filter(|a| a.cost.is_some())
+                                .collect();
+                            if !costed.is_empty() {
+                                if let Some(own) = node.cost {
+                                    cost_row(
+                                        ui,
+                                        &theme,
+                                        "This resource",
+                                        &format_cost(own, currency),
+                                        false,
                                     );
                                 }
-                                if a.shared {
-                                    label.push_str(" (shared)");
+                                for att in costed {
+                                    cost_row(
+                                        ui,
+                                        &theme,
+                                        &format!("{} · {}", att.name, att.kind),
+                                        &format_cost(att.cost.unwrap_or(0.0), currency),
+                                        false,
+                                    );
                                 }
-                                label
-                            })
-                            .collect();
-                        row(
-                            &format!("Attached {kind}s ({})", names.len()),
-                            &names.join("\n"),
-                            false,
-                        );
-                    }
-                    row("Resource id", &node.id, true);
-                    for (key, value) in &node.metadata {
-                        row(key, value, false);
+                                ui.add_space(2.0);
+                                ui.separator();
+                            }
+                            cost_row(ui, &theme, "Total", &format_cost(total, currency), true);
+                            ui.add_space(4.0);
+                        });
                     }
                 });
             });
@@ -746,6 +762,74 @@ impl eframe::App for CloudVizApp {
             ctx.request_repaint_after(std::time::Duration::from_millis(120));
         }
     }
+}
+
+/// One collapsible details-panel section — an uppercase header with a
+/// disclosure triangle (accordion). Open state persists for the session.
+fn section(ui: &mut Ui, theme: &Theme, title: &str, add: impl FnOnce(&mut Ui)) {
+    egui::CollapsingHeader::new(
+        RichText::new(title.to_uppercase())
+            .size(10.5)
+            .strong()
+            .color(c32(theme.ink_3)),
+    )
+    .default_open(true)
+    .show(ui, |ui| {
+        ui.add_space(2.0);
+        add(ui);
+        ui.add_space(4.0);
+    });
+    ui.separator();
+}
+
+/// A key-over-value line inside a details-panel section.
+fn detail_row(ui: &mut Ui, theme: &Theme, key: &str, value: &str, mono: bool) {
+    ui.add_space(6.0);
+    ui.label(
+        RichText::new(key.to_uppercase())
+            .size(10.0)
+            .color(c32(theme.ink_3)),
+    );
+    let text = if mono {
+        RichText::new(value)
+            .font(FontId::monospace(11.0))
+            .color(c32(theme.ink_2))
+    } else {
+        RichText::new(value).color(c32(theme.ink))
+    };
+    ui.add(egui::Label::new(text).wrap());
+    ui.add_space(6.0);
+}
+
+/// One line of the cost breakdown: label left, amount right-aligned. The
+/// label gets only the width the amount leaves over and truncates with an
+/// ellipsis, so long resource names never run under the price.
+fn cost_row(ui: &mut Ui, theme: &Theme, label: &str, amount: &str, strong: bool) {
+    ui.horizontal(|ui| {
+        let mut name =
+            RichText::new(label).color(c32(if strong { theme.ink } else { theme.ink_2 }));
+        let mut value = RichText::new(amount).color(c32(theme.ink));
+        if strong {
+            name = name.strong();
+            value = value.strong();
+        }
+        let font = egui::TextStyle::Body.resolve(ui.style());
+        let amount_w = ui.fonts(|f| {
+            f.layout_no_wrap(amount.to_string(), font, egui::Color32::PLACEHOLDER)
+                .rect
+                .width()
+        });
+        let label_w = (ui.available_width() - amount_w - 12.0).max(40.0);
+        ui.scope(|ui| {
+            ui.set_min_width(label_w);
+            ui.set_max_width(label_w);
+            ui.add(egui::Label::new(name).truncate())
+                .on_hover_text(label);
+        });
+        ui.with_layout(EguiLayout::right_to_left(Align::Center), |ui| {
+            ui.label(value);
+        });
+    });
 }
 
 /// On-disk cache key for a scope + cost-period pair. Month-to-date keeps the
