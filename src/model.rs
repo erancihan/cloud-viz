@@ -176,6 +176,90 @@ pub struct Topology {
     pub warnings: Vec<String>,
 }
 
+/// Billing window the per-resource cost query covers — what the card badges
+/// show. Selected in the toolbar; a topology's costs always reflect the
+/// period it was fetched with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CostPeriod {
+    /// The current billing month so far (the 1st through today).
+    MonthToDate,
+    /// A whole past calendar month (`month` is 1-based).
+    Month { year: i32, month: u32 },
+}
+
+impl CostPeriod {
+    pub fn label(self) -> String {
+        match self {
+            Self::MonthToDate => "This month (to date)".into(),
+            Self::Month { year, month } => format!("{} {year}", month_name(month)),
+        }
+    }
+
+    /// Cache-key suffix so each period caches separately. Month-to-date is
+    /// `None` — the plain key — keeping existing cache files valid.
+    pub fn cache_suffix(self) -> Option<String> {
+        match self {
+            Self::MonthToDate => None,
+            Self::Month { year, month } => Some(format!("{year:04}-{month:02}")),
+        }
+    }
+}
+
+pub fn month_name(month: u32) -> &'static str {
+    const NAMES: [&str; 12] = [
+        "January",
+        "February",
+        "March",
+        "April",
+        "May",
+        "June",
+        "July",
+        "August",
+        "September",
+        "October",
+        "November",
+        "December",
+    ];
+    NAMES[(month.clamp(1, 12) - 1) as usize]
+}
+
+/// Days in a calendar month, leap-aware.
+pub fn days_in_month(year: i32, month: u32) -> u32 {
+    match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        _ => {
+            let leap = (year % 4 == 0 && year % 100 != 0) || year % 400 == 0;
+            if leap {
+                29
+            } else {
+                28
+            }
+        }
+    }
+}
+
+/// (year, month, day) in UTC from unix seconds — Howard Hinnant's civil
+/// calendar algorithm, so we don't need a date-time dependency.
+pub fn civil_from_unix(secs: u64) -> (i32, u32, u32) {
+    let z = (secs / 86_400) as i64 + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
+    let y = yoe + era * 400 + i64::from(m <= 2);
+    (y as i32, m, d)
+}
+
+/// The calendar month `k` steps before (year, month).
+pub fn month_minus(year: i32, month: u32, k: u32) -> (i32, u32) {
+    let idx = i64::from(year) * 12 + i64::from(month) - 1 - i64::from(k);
+    (idx.div_euclid(12) as i32, (idx.rem_euclid(12) + 1) as u32)
+}
+
 /// Renders a cost amount for display: known currencies get their symbol
 /// (`$12.34`), anything else the ISO code (`12.34 SEK`); cents drop once the
 /// amount reaches four digits so card badges stay short.
@@ -413,6 +497,44 @@ mod tests {
         // …and adds onto the owner's own cost when both are known.
         vm.cost = Some(40.0);
         assert_eq!(vm.total_cost(), Some(43.25));
+    }
+
+    #[test]
+    fn civil_date_math_is_correct() {
+        assert_eq!(civil_from_unix(0), (1970, 1, 1));
+        // 2001-09-09T01:46:40Z
+        assert_eq!(civil_from_unix(1_000_000_000), (2001, 9, 9));
+        // 2020-02-29T12:00:00Z — leap day decodes correctly.
+        assert_eq!(civil_from_unix(1_582_977_600), (2020, 2, 29));
+
+        assert_eq!(days_in_month(2024, 2), 29); // leap
+        assert_eq!(days_in_month(2100, 2), 28); // century, not leap
+        assert_eq!(days_in_month(2000, 2), 29); // 400-year leap
+        assert_eq!(days_in_month(2026, 7), 31);
+        assert_eq!(days_in_month(2026, 9), 30);
+
+        assert_eq!(month_minus(2026, 7, 1), (2026, 6));
+        assert_eq!(month_minus(2026, 1, 1), (2025, 12));
+        assert_eq!(month_minus(2026, 3, 15), (2024, 12));
+
+        assert_eq!(
+            CostPeriod::Month {
+                year: 2026,
+                month: 6
+            }
+            .label(),
+            "June 2026"
+        );
+        assert_eq!(
+            CostPeriod::Month {
+                year: 2026,
+                month: 6
+            }
+            .cache_suffix()
+            .as_deref(),
+            Some("2026-06")
+        );
+        assert_eq!(CostPeriod::MonthToDate.cache_suffix(), None);
     }
 
     #[test]

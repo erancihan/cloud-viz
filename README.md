@@ -62,14 +62,20 @@ cargo run -- --export-svg topo.svg --provider azure      # your live estate
   "Regional" box instead — both styled like a virtual network so they don't
   scatter. Remaining relationships (NSG → subnet/VM, app → db, …) route as
   relaxed beziers.
-- Shows month-to-date cost on each card (top-right badge): one Cost
-  Management query per subscription (`az rest` — actual cost grouped by
-  ResourceId), so a VM's badge is the VM plus everything folded into its
-  card (disks, public IPs, …); the details panel breaks it down per
-  attachment. Needs the Cost Management Reader role — without it the cards
-  simply render without badges (a warning explains why).
-- Pan (drag), zoom (scroll, cursor-anchored), fit-to-view, clickable minimap,
-  light/dark themes, fullscreen (F11), details panel per resource.
+- Shows cost on each card (top-right badge): one Cost Management query per
+  subscription (`az rest` — actual cost grouped by ResourceId), so a VM's
+  badge is the VM plus everything folded into its card (disks, public IPs,
+  …); the details panel breaks it down per attachment. The toolbar's COSTS
+  dropdown picks the billing window — this month to date (default) or any
+  of the last 12 calendar months; each period caches separately, so
+  revisiting a month is instant. Needs the Cost Management Reader role —
+  without it the cards simply render without badges (a warning explains
+  why).
+- Pan (drag), zoom (scroll, cursor-anchored; +/- buttons by the minimap,
+  center-anchored), fit-to-view, clickable minimap, light/dark themes,
+  fullscreen (F11), details panel per resource. The screen zoom (Ctrl +/-)
+  persists across sessions (`~/.config/cloudviz/config.json`,
+  `%APPDATA%\cloudviz\config.json`).
 - Degrades gracefully: CLI missing → install guidance; signed out →
   `az login` guidance; individual enrichment listings failing → warning badge,
   not a broken screen.
