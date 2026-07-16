@@ -192,3 +192,126 @@ pub struct AzIdRef {
     #[serde(default)]
     pub id: Option<String>,
 }
+
+/// Response of the Cost Management query API (`az rest --method post …/
+/// Microsoft.CostManagement/query`), aggregating month-to-date actual cost
+/// grouped by ResourceId. Columnar: a `columns` legend plus untyped `rows`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct AzCostQueryResponse {
+    #[serde(default)]
+    pub properties: Option<AzCostQueryProperties>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct AzCostQueryProperties {
+    #[serde(default)]
+    pub columns: Vec<AzCostColumn>,
+    #[serde(default)]
+    pub rows: Vec<Vec<serde_json::Value>>,
+    #[serde(default, rename = "nextLink")]
+    pub next_link: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct AzCostColumn {
+    pub name: String,
+}
+
+/// One resource's month-to-date cost, decoded from the columnar response.
+#[derive(Debug, Clone)]
+pub struct AzCostRow {
+    pub resource_id: String,
+    pub cost: f64,
+    pub currency: Option<String>,
+}
+
+impl AzCostQueryResponse {
+    /// True when the API returned only a partial page (we don't paginate —
+    /// callers surface a warning instead of silently missing rows).
+    pub fn truncated(&self) -> bool {
+        self.properties
+            .as_ref()
+            .and_then(|p| p.next_link.as_deref())
+            .is_some_and(|l| !l.is_empty())
+    }
+
+    /// Decodes the rows by looking the columns up by name (the API does not
+    /// guarantee an order): the cost measure ("Cost"/"PreTaxCost"), the
+    /// "ResourceId" dimension, and the "Currency" tag-along column.
+    pub fn resource_costs(&self) -> Vec<AzCostRow> {
+        let Some(props) = &self.properties else {
+            return Vec::new();
+        };
+        let col = |names: &[&str]| -> Option<usize> {
+            props
+                .columns
+                .iter()
+                .position(|c| names.iter().any(|n| c.name.eq_ignore_ascii_case(n)))
+        };
+        let (Some(cost_col), Some(id_col)) = (col(&["Cost", "PreTaxCost"]), col(&["ResourceId"]))
+        else {
+            return Vec::new();
+        };
+        let currency_col = col(&["Currency"]);
+        props
+            .rows
+            .iter()
+            .filter_map(|row| {
+                let cost = match row.get(cost_col)? {
+                    serde_json::Value::Number(n) => n.as_f64()?,
+                    serde_json::Value::String(s) => s.parse().ok()?,
+                    _ => return None,
+                };
+                let resource_id = row.get(id_col)?.as_str()?.to_string();
+                if resource_id.is_empty() {
+                    return None;
+                }
+                let currency = currency_col
+                    .and_then(|c| row.get(c))
+                    .and_then(|v| v.as_str())
+                    .map(str::to_string);
+                Some(AzCostRow {
+                    resource_id,
+                    cost,
+                    currency,
+                })
+            })
+            .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cost_query_response_decodes_rows_by_column_name() {
+        let r: AzCostQueryResponse =
+            serde_json::from_str(include_str!("fixtures/costs.json")).unwrap();
+        assert!(!r.truncated());
+        let rows = r.resource_costs();
+        assert_eq!(rows.len(), 8);
+        assert_eq!(rows[0].cost, 30.0);
+        assert!(rows[0].resource_id.ends_with("vm-web-01"));
+        assert_eq!(rows[0].currency.as_deref(), Some("USD"));
+
+        // Shuffled columns, the PreTaxCost measure, a string-typed amount,
+        // and a nextLink (partial page) still decode.
+        let shuffled = serde_json::json!({"properties": {
+            "columns": [
+                {"name": "ResourceId", "type": "String"},
+                {"name": "PreTaxCost", "type": "Number"},
+                {"name": "Currency", "type": "String"}
+            ],
+            "rows": [["/id-a", "1.5", "EUR"]],
+            "nextLink": "https://example.invalid/next-page"
+        }});
+        let r: AzCostQueryResponse = serde_json::from_value(shuffled).unwrap();
+        assert!(r.truncated());
+        let rows = r.resource_costs();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].resource_id, "/id-a");
+        assert_eq!(rows[0].cost, 1.5);
+        assert_eq!(rows[0].currency.as_deref(), Some("EUR"));
+    }
+}

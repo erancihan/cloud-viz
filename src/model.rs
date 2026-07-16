@@ -86,15 +86,37 @@ pub struct TopologyNode {
     /// the details panel.
     #[serde(default)]
     pub attachments: Vec<Attachment>,
+    /// This resource's own accrued cost for the current billing month
+    /// (month-to-date), in the topology's [`Topology::currency`]. `None`
+    /// when the provider had no cost data (no permission, free resource…).
+    #[serde(default)]
+    pub cost: Option<f64>,
     pub region: Option<String>,
     /// Provider-specific extras surfaced in the details panel (tags, sku…).
     /// Kept ordered so the panel is stable between refreshes.
     pub metadata: Vec<(String, String)>,
 }
 
+impl TopologyNode {
+    /// Month-to-date cost of this resource plus everything folded into its
+    /// card (disks, public IPs…) — the number shown on the card. `None` when
+    /// neither the resource nor any attachment has cost data.
+    pub fn total_cost(&self) -> Option<f64> {
+        let attached: Option<f64> = self
+            .attachments
+            .iter()
+            .filter_map(|a| a.cost)
+            .fold(None, |acc, c| Some(acc.unwrap_or(0.0) + c));
+        match (self.cost, attached) {
+            (None, None) => None,
+            (own, att) => Some(own.unwrap_or(0.0) + att.unwrap_or(0.0)),
+        }
+    }
+}
+
 /// A subsidiary resource folded into its owner's card (see
 /// [`TopologyNode::attachments`]).
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Attachment {
     /// Short lowercase kind driving the row icon: "disk", "nic",
     /// "extension", "slot", "ssh key".
@@ -105,6 +127,10 @@ pub struct Attachment {
     /// badge on the sub-card's corner.
     #[serde(default)]
     pub shared: bool,
+    /// The folded resource's own month-to-date cost — counted into the
+    /// owner card's [`TopologyNode::total_cost`].
+    #[serde(default)]
+    pub cost: Option<f64>,
 }
 
 impl Attachment {
@@ -141,8 +167,31 @@ pub struct Topology {
     pub scope_label: String,
     pub nodes: Vec<TopologyNode>,
     pub edges: Vec<TopologyEdge>,
+    /// Billing currency (ISO code, e.g. "USD") every node/attachment cost is
+    /// denominated in. One per topology — a subscription bills in a single
+    /// currency. `None` when no cost data was available.
+    #[serde(default)]
+    pub currency: Option<String>,
     /// Non-fatal problems encountered during the fetch.
     pub warnings: Vec<String>,
+}
+
+/// Renders a cost amount for display: known currencies get their symbol
+/// (`$12.34`), anything else the ISO code (`12.34 SEK`); cents drop once the
+/// amount reaches four digits so card badges stay short.
+pub fn format_cost(amount: f64, currency: Option<&str>) -> String {
+    let value = if amount.abs() >= 1000.0 {
+        format!("{amount:.0}")
+    } else {
+        format!("{amount:.2}")
+    };
+    match currency {
+        Some("USD") => format!("${value}"),
+        Some("EUR") => format!("€{value}"),
+        Some("GBP") => format!("£{value}"),
+        Some(code) => format!("{value} {code}"),
+        None => value,
+    }
 }
 
 /// Presentation post-pass shared by all providers: gather detached leaves of
@@ -216,6 +265,7 @@ pub fn group_detached(topology: &mut Topology) {
             container: true,
             group: None,
             attachments: Vec::new(),
+            cost: None,
             region: None,
             metadata: Vec::new(),
         });
@@ -288,6 +338,7 @@ mod tests {
             container: false,
             group: None,
             attachments: Vec::new(),
+            cost: None,
             region: None,
             metadata: Vec::new(),
         }
@@ -306,6 +357,7 @@ mod tests {
                 leaf("vm-a", "Virtual machine"),
             ],
             edges: Vec::new(),
+            currency: None,
             warnings: Vec::new(),
         };
         group_detached(&mut t);
@@ -335,5 +387,40 @@ mod tests {
         );
         // Unrelated leaves stay top-level.
         assert_eq!(by_name("vm-a").parent_id, None);
+    }
+
+    #[test]
+    fn total_cost_sums_own_and_attachment_costs() {
+        let mut vm = leaf("vm-a", "Virtual machine");
+        assert_eq!(vm.total_cost(), None);
+
+        vm.attachments = vec![
+            Attachment {
+                kind: "disk".into(),
+                name: "data".into(),
+                shared: false,
+                cost: Some(3.25),
+            },
+            Attachment {
+                kind: "nic".into(),
+                name: "nic-a".into(),
+                shared: false,
+                cost: None,
+            },
+        ];
+        // Attachment cost alone counts even when the owner has none…
+        assert_eq!(vm.total_cost(), Some(3.25));
+        // …and adds onto the owner's own cost when both are known.
+        vm.cost = Some(40.0);
+        assert_eq!(vm.total_cost(), Some(43.25));
+    }
+
+    #[test]
+    fn format_cost_symbols_codes_and_precision() {
+        assert_eq!(format_cost(12.345, Some("USD")), "$12.35");
+        assert_eq!(format_cost(0.0, Some("EUR")), "€0.00");
+        assert_eq!(format_cost(1234.56, Some("GBP")), "£1235");
+        assert_eq!(format_cost(9.9, Some("SEK")), "9.90 SEK");
+        assert_eq!(format_cost(5.0, None), "5.00");
     }
 }

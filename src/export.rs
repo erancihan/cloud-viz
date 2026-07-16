@@ -7,7 +7,7 @@ use crate::geom::{label_t, route_edge};
 use crate::layout::{
     layout_topology, secondary_split_index, Rect, ATTACH_PAD, ATTACH_ROW, ATTACH_SPLIT, LEAF_H,
 };
-use crate::model::{EdgeKind, ResourceCategory, Topology};
+use crate::model::{format_cost, EdgeKind, ResourceCategory, Topology};
 use crate::theme::{mix, Rgb, Theme};
 use std::fmt::Write;
 
@@ -212,13 +212,33 @@ pub fn to_svg(topology: &Topology, theme: &Theme) -> String {
         );
         let tx = cx + chip + 12.0;
         let mid = r.y + LEAF_H / 2.0;
+        // Month-to-date cost badge, right-aligned on the name line (mirrors
+        // ui/canvas.rs); the name gives up truncation room for it.
+        let cost_text = node
+            .total_cost()
+            .map(|total| format_cost(total, topology.currency.as_deref()));
+        let name_max = if cost_text.is_some() { 16 } else { 24 };
+        if let Some(cost) = &cost_text {
+            let _ = write!(
+                svg,
+                r#"<text x="{:.1}" y="{:.1}" font-size="10.5" fill="{}" text-anchor="end">{}</text>"#,
+                r.right() - 10.0,
+                if node.group.is_some() {
+                    mid - 9.0
+                } else {
+                    mid - 4.0
+                },
+                theme.ink_2.hex(),
+                escape(cost)
+            );
+        }
         if let Some(group) = &node.group {
             let _ = write!(
                 svg,
                 r#"<text x="{tx:.1}" y="{:.1}" font-size="12.5" font-weight="600" fill="{}">{}</text>"#,
                 mid - 9.0,
                 theme.ink.hex(),
-                escape(&truncate(&node.name, 24))
+                escape(&truncate(&node.name, name_max))
             );
             let _ = write!(
                 svg,
@@ -240,7 +260,7 @@ pub fn to_svg(topology: &Topology, theme: &Theme) -> String {
                 r#"<text x="{tx:.1}" y="{:.1}" font-size="12.5" font-weight="600" fill="{}">{}</text>"#,
                 mid - 4.0,
                 theme.ink.hex(),
-                escape(&truncate(&node.name, 24))
+                escape(&truncate(&node.name, name_max))
             );
             let _ = write!(
                 svg,
@@ -474,5 +494,16 @@ mod tests {
         }
         // one bezier path per edge
         assert_eq!(svg.matches("<path d=\"M ").count(), topo.edges.len());
+    }
+
+    #[test]
+    fn export_shows_cost_badges() {
+        let topo = demo_topology();
+        let svg = to_svg(&topo, &theme::DARK);
+        // vm-web-01: own 33.58 + attached disk 3.20; lb-web: 18.26 + 2.92.
+        assert!(svg.contains(">$36.78<"), "vm total cost badge missing");
+        assert!(svg.contains(">$21.18<"), "lb total cost badge missing");
+        // A card without cost data shows no zero badge.
+        assert!(!svg.contains(">$0.00<"));
     }
 }

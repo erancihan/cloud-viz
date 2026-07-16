@@ -208,7 +208,9 @@ pub fn demo_topology() -> Topology {
         },
         Def {
             id: format!("{aks}/vmss-nodes"),
-            name: "aks-nodepool1-vmss",
+            // Short enough to survive the SVG export's tighter name
+            // truncation next to a cost badge.
+            name: "vmss-nodepool1",
             kind: "Microsoft.Compute/virtualMachineScaleSets",
             kind_label: "VM scale set",
             category: Compute,
@@ -404,6 +406,7 @@ pub fn demo_topology() -> Topology {
             container: d.container,
             group: d.group.map(str::to_string),
             attachments: Vec::new(),
+            cost: None,
             region: Some("westeurope".into()),
             metadata: d
                 .metadata
@@ -417,14 +420,15 @@ pub fn demo_topology() -> Topology {
     // extensions, NICs, and SSH keys ride on their VM's card; slots on their
     // site's. `ssh-admin` is used by both VMs, so it carries the shared/link
     // badge and has no standalone card.
-    let mut attach = |name: &str, items: &[(&str, &str, bool)]| {
+    let mut attach = |name: &str, items: &[(&str, &str, bool, Option<f64>)]| {
         if let Some(node) = nodes.iter_mut().find(|n| n.name == name) {
             node.attachments = items
                 .iter()
-                .map(|&(kind, name, shared)| Attachment {
+                .map(|&(kind, name, shared, cost)| Attachment {
                     kind: kind.to_string(),
                     name: name.to_string(),
                     shared,
+                    cost,
                 })
                 .collect();
         }
@@ -432,21 +436,54 @@ pub fn demo_topology() -> Topology {
     attach(
         "vm-web-01",
         &[
-            ("disk", "disk-web-01-data", false),
-            ("extension", "AADSSHLoginForLinux", false),
-            ("nic", "nic-web-01", false),
-            ("restore point", "rpc-vm-web-01", false),
-            ("ssh key", "ssh-admin", true),
+            ("disk", "disk-web-01-data", false, Some(3.20)),
+            ("extension", "AADSSHLoginForLinux", false, None),
+            ("nic", "nic-web-01", false, None),
+            ("restore point", "rpc-vm-web-01", false, None),
+            ("ssh key", "ssh-admin", true, None),
         ],
     );
     attach(
         "vm-web-02",
-        &[("nic", "nic-web-02", false), ("ssh key", "ssh-admin", true)],
+        &[
+            ("nic", "nic-web-02", false, None),
+            ("ssh key", "ssh-admin", true, None),
+        ],
     );
-    attach("app-portal", &[("slot", "staging", false)]);
-    attach("vm-jump", &[("nic", "nic-jump", false)]);
+    attach("app-portal", &[("slot", "staging", false, None)]);
+    attach("vm-jump", &[("nic", "nic-jump", false, None)]);
     // The load balancer's frontend IP folds in like a VM's public IP would.
-    attach("lb-web", &[("public ip", "pip-gateway", false)]);
+    attach("lb-web", &[("public ip", "pip-gateway", false, Some(2.92))]);
+
+    // Month-to-date costs, as the Azure mapper fills from the Cost Management
+    // query. Some cards stay cost-free (NSGs, SSH keys, network watchers…) —
+    // no badge, not a zero.
+    let mut set_cost = |name: &str, cost: f64| {
+        if let Some(node) = nodes.iter_mut().find(|n| n.name == name) {
+            node.cost = Some(cost);
+        }
+    };
+    for (name, cost) in [
+        ("vm-web-01", 33.58),
+        ("vm-web-02", 33.58),
+        ("vm-jump", 9.86),
+        ("vmss-nodepool1", 61.44),
+        ("kubernetes-lb", 2.92),
+        ("app-portal", 12.41),
+        ("lb-web", 18.26),
+        ("acrcontoso", 5.00),
+        ("sqldb-orders", 24.30),
+        ("cosmos-catalog", 31.07),
+        ("redis-session", 15.23),
+        ("stcontosoprod", 4.12),
+        ("kv-secrets", 0.35),
+        ("sb-events", 0.68),
+        ("log-contoso", 7.75),
+        ("disk-decom", 5.63),
+        ("pip-reserved", 2.92),
+    ] {
+        set_cost(name, cost);
+    }
 
     // Only dependency edges remain; subnet, vnet, and plan membership is
     // shown by containment, and NICs/disks/extensions/slots by attachments.
@@ -483,6 +520,7 @@ pub fn demo_topology() -> Topology {
         scope_label: "Contoso — Production (sample data)".into(),
         nodes,
         edges,
+        currency: Some("USD".into()),
         warnings: Vec::new(),
     };
     group_detached(&mut topology);
@@ -617,6 +655,7 @@ mod tests {
                 kind: "slot".into(),
                 name: "staging".into(),
                 shared: false,
+                cost: None,
             }]
         );
     }

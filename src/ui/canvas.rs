@@ -3,7 +3,7 @@
 
 use crate::geom::{label_t, route_edge};
 use crate::layout::Layout;
-use crate::model::{EdgeKind, ResourceCategory, Topology};
+use crate::model::{format_cost, EdgeKind, ResourceCategory, Topology};
 use crate::theme::{mix, Theme};
 use crate::ui::{c32, c32a, glyphs};
 use eframe::egui::{
@@ -401,6 +401,21 @@ fn draw_card(
     let name_font = FontId::proportional((12.5 * zoom).max(6.0));
     let sub_font = FontId::proportional((10.5 * zoom).max(5.0));
     let cy = rect.min.y + head_h / 2.0;
+
+    // Month-to-date cost badge in the head's top-right corner — the resource
+    // plus everything folded into its card. The name line yields the room.
+    let cost_galley = node.total_cost().map(|total| {
+        painter.layout_no_wrap(
+            format_cost(total, topology.currency.as_deref()),
+            sub_font.clone(),
+            c32(theme.ink_2),
+        )
+    });
+    let name_w = match &cost_galley {
+        Some(g) => (max_w - g.rect.width() - 8.0 * zoom).max(24.0 * zoom),
+        None => max_w,
+    };
+
     if let Some(group) = &node.group {
         let line = 13.0 * zoom;
         draw_truncated(
@@ -410,7 +425,7 @@ fn draw_card(
             &node.name,
             name_font,
             c32(theme.ink),
-            max_w,
+            name_w,
         );
         draw_truncated(
             painter,
@@ -438,7 +453,7 @@ fn draw_card(
             &node.name,
             name_font,
             c32(theme.ink),
-            max_w,
+            name_w,
         );
         draw_truncated(
             painter,
@@ -449,6 +464,20 @@ fn draw_card(
             c32(theme.ink_3),
             max_w,
         );
+    }
+    if let Some(g) = cost_galley {
+        // Centered on the name line: the group layout centers the name at
+        // cy - 13·zoom, the two-line layout bottoms it at cy - 2·zoom.
+        let line_c = if node.group.is_some() {
+            cy - 13.0 * zoom
+        } else {
+            cy - 2.0 * zoom - g.rect.height() / 2.0
+        };
+        let pos = Pos2::new(
+            rect.max.x - 10.0 * zoom - g.rect.width(),
+            line_c - g.rect.height() / 2.0,
+        );
+        painter.galley(pos, g, c32(theme.ink_2));
     }
 
     // Attachment rows: a mini icon + name per folded-in subsidiary. The

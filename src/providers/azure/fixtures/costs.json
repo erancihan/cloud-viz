@@ -1,0 +1,23 @@
+{
+  "id": "subscriptions/00000000-0000-0000-0000-000000000001/providers/Microsoft.CostManagement/query/aaaaaaaa-0000-0000-0000-000000000000",
+  "name": "aaaaaaaa-0000-0000-0000-000000000000",
+  "type": "Microsoft.CostManagement/query",
+  "properties": {
+    "nextLink": null,
+    "columns": [
+      { "name": "Cost", "type": "Number" },
+      { "name": "ResourceId", "type": "String" },
+      { "name": "Currency", "type": "String" }
+    ],
+    "rows": [
+      [30.0, "/subscriptions/00000000-0000-0000-0000-000000000001/resourcegroups/rg-app/providers/microsoft.compute/virtualmachines/vm-web-01", "USD"],
+      [8.25, "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/RG-APP/providers/Microsoft.Compute/virtualMachines/vm-web-01", "USD"],
+      [3.25, "/subscriptions/00000000-0000-0000-0000-000000000001/resourcegroups/rg-app/providers/microsoft.compute/disks/datadisk_1", "USD"],
+      [2.5, "/subscriptions/00000000-0000-0000-0000-000000000001/resourcegroups/rg-app/providers/microsoft.network/publicipaddresses/pip-web", "USD"],
+      [5.5, "/subscriptions/00000000-0000-0000-0000-000000000001/resourcegroups/rg-app/providers/microsoft.compute/disks/disk-orphan", "USD"],
+      [1.25, "/subscriptions/00000000-0000-0000-0000-000000000001/resourcegroups/rg-orphan/providers/microsoft.storage/storageaccounts/ststray", "USD"],
+      [72.5, "/subscriptions/00000000-0000-0000-0000-000000000001/resourcegroups/rg-app/providers/microsoft.containerservice/managedclusters/aks-rex", "USD"],
+      [4.75, "/subscriptions/00000000-0000-0000-0000-000000000001/resourcegroups/rg-gone/providers/microsoft.compute/virtualmachines/vm-deleted-this-month", "USD"]
+    ]
+  }
+}

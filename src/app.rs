@@ -419,6 +419,7 @@ impl CloudVizApp {
             self.selected = None;
             return;
         };
+        let currency = topology.currency.clone();
 
         let mut open = true;
         egui::SidePanel::right("details")
@@ -479,6 +480,20 @@ impl CloudVizApp {
                         row("Region", region, false);
                     }
                     row("Type", &node.kind, true);
+                    // Month-to-date spend — the card badge's number, broken
+                    // down into the resource itself vs. folded-in items.
+                    if let Some(total) = node.total_cost() {
+                        let attached: f64 = node.attachments.iter().filter_map(|a| a.cost).sum();
+                        let mut value = format_cost(total, currency.as_deref());
+                        if attached > 0.0 {
+                            value = format!(
+                                "{value}  ·  {} resource + {} attached",
+                                format_cost(total - attached, currency.as_deref()),
+                                format_cost(attached, currency.as_deref()),
+                            );
+                        }
+                        row("Cost (month to date)", &value, false);
+                    }
                     // Folded-in subsidiaries (disks, NICs, extensions, slots,
                     // SSH keys), grouped by kind in first-seen order.
                     let mut kinds: Vec<&str> = Vec::new();
@@ -493,11 +508,17 @@ impl CloudVizApp {
                             .iter()
                             .filter(|a| a.kind == kind)
                             .map(|a| {
-                                if a.shared {
-                                    format!("{} (shared)", a.name)
-                                } else {
-                                    a.name.clone()
+                                let mut label = a.name.clone();
+                                if let Some(cost) = a.cost {
+                                    label = format!(
+                                        "{label} — {}",
+                                        format_cost(cost, currency.as_deref())
+                                    );
                                 }
+                                if a.shared {
+                                    label.push_str(" (shared)");
+                                }
+                                label
                             })
                             .collect();
                         row(

@@ -622,6 +622,7 @@ mod tests {
             container,
             group: None,
             attachments: Vec::new(),
+            cost: None,
             region: None,
             metadata: Vec::new(),
         }
@@ -662,6 +663,7 @@ mod tests {
             scope_label: "t".into(),
             nodes,
             edges,
+            currency: None,
             warnings: Vec::new(),
         };
         let layout = layout_topology(&topo);
