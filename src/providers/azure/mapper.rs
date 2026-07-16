@@ -16,6 +16,7 @@ pub struct AzureInventory {
     pub sshkeys: Vec<AzSshKey>,
     pub aks: Vec<AzAksCluster>,
     pub restore_points: Vec<AzRestorePointCollection>,
+    pub costs: Vec<AzCostRow>,
     pub warnings: Vec<String>,
 }
 
@@ -182,6 +183,19 @@ pub fn build_topology(inv: AzureInventory) -> Topology {
 
     let norm = |id: &str| id.to_lowercase();
 
+    // Month-to-date cost per resource id (summed — the query may split one
+    // resource across rows), plus the subscription's billing currency. A
+    // resource absent from the map simply accrued no cost this month.
+    let mut cost_map: HashMap<String, f64> = HashMap::new();
+    let mut currency: Option<String> = None;
+    for row in &inv.costs {
+        *cost_map.entry(norm(&row.resource_id)).or_insert(0.0) += row.cost;
+        if currency.is_none() {
+            currency = row.currency.clone();
+        }
+    }
+    let cost_of = |id: &str| cost_map.get(id).copied();
+
     // Resource-group display names, keyed case-insensitively. Resource groups
     // are no longer container nodes — the name rides along as card subtext.
     let mut rg_display: HashMap<String, String> = HashMap::new();
@@ -263,6 +277,7 @@ pub fn build_topology(inv: AzureInventory) -> Topology {
                     kind: "public ip".into(),
                     name: resource.name.clone(),
                     shared: anchors.len() > 1,
+                    cost: cost_of(&id),
                 });
             }
             fold_away.insert(id);
@@ -307,6 +322,7 @@ pub fn build_topology(inv: AzureInventory) -> Topology {
                 kind: kind.to_string(),
                 name: name.to_string(),
                 shared: false,
+                cost: cost_of(&id),
             });
             fold_away.insert(id);
         }
@@ -356,6 +372,7 @@ pub fn build_topology(inv: AzureInventory) -> Topology {
                 kind: "ssh key".into(),
                 name: ssh_key.name.clone(),
                 shared: users.len() > 1,
+                cost: cost_of(&key_id),
             });
         }
         fold_away.insert(key_id);
@@ -378,6 +395,7 @@ pub fn build_topology(inv: AzureInventory) -> Topology {
             }
         }
         metadata.extend(tags_metadata(&resource.tags));
+        let cost = cost_of(&id);
         add_node(
             &mut nodes,
             &mut index,
@@ -391,6 +409,7 @@ pub fn build_topology(inv: AzureInventory) -> Topology {
                 container: resource.resource_type.to_lowercase() == VNET_TYPE,
                 group: group_label(&resource.resource_group),
                 attachments: Vec::new(),
+                cost,
                 region: resource.location.clone(),
                 metadata,
             },
@@ -416,6 +435,7 @@ pub fn build_topology(inv: AzureInventory) -> Topology {
                     container: true,
                     group: group_label(&vnet.resource_group),
                     attachments: Vec::new(),
+                    cost: cost_of(&vnet_id),
                     region: vnet.location.clone(),
                     metadata: Vec::new(),
                 },
@@ -455,6 +475,7 @@ pub fn build_topology(inv: AzureInventory) -> Topology {
                     container: true,
                     group: None,
                     attachments: Vec::new(),
+                    cost: None,
                     region: None,
                     metadata: prefix
                         .map(|p| ("addressPrefix".to_string(), p))
@@ -632,6 +653,7 @@ pub fn build_topology(inv: AzureInventory) -> Topology {
         scope_label: inv.account.name.clone(),
         nodes,
         edges,
+        currency,
         warnings: inv.warnings,
     };
     crate::model::group_detached(&mut topology);
@@ -668,6 +690,9 @@ mod tests {
             aks: serde_json::from_str(include_str!("fixtures/aks.json")).unwrap(),
             restore_points: serde_json::from_str(include_str!("fixtures/restore-points.json"))
                 .unwrap(),
+            costs: serde_json::from_str::<AzCostQueryResponse>(include_str!("fixtures/costs.json"))
+                .unwrap()
+                .resource_costs(),
             warnings: Vec::new(),
         })
     }
@@ -849,6 +874,7 @@ mod tests {
                 kind: "slot".into(),
                 name: "staging".into(),
                 shared: false,
+                cost: None,
             }]
         );
         // A webapp whose site/plan never appeared in the listings is skipped.
@@ -903,6 +929,31 @@ mod tests {
             .nodes
             .iter()
             .any(|n| n.name == "Restore point collections"));
+    }
+
+    #[test]
+    fn costs_land_on_nodes_and_attachments() {
+        let t = build();
+        assert_eq!(t.currency.as_deref(), Some("USD"));
+
+        // Two rows for vm-web-01 (with ARM casing drift) sum into one cost.
+        let vm = find(&t, "vm-web-01");
+        assert_eq!(vm.cost, Some(38.25));
+        // Folded resources carry their own cost on the attachment row…
+        let att_cost = |kind: &str| vm.attachments.iter().find(|a| a.kind == kind).unwrap().cost;
+        assert_eq!(att_cost("disk"), Some(3.25));
+        assert_eq!(att_cost("public ip"), Some(2.5));
+        assert_eq!(att_cost("ssh key"), None); // no cost row for the key
+                                               // …and the card badge shows owner + attachments.
+        assert_eq!(vm.total_cost(), Some(38.25 + 3.25 + 2.5));
+
+        // Costs also land on plain and detached nodes.
+        assert_eq!(find(&t, "ststray").cost, Some(1.25));
+        assert_eq!(find(&t, "disk-orphan").cost, Some(5.5));
+        assert_eq!(find(&t, "aks-rex").cost, Some(72.5));
+        // No cost row → no badge, not zero.
+        assert_eq!(find(&t, "vm-web-02").cost, None);
+        assert_eq!(find(&t, "vm-web-02").total_cost(), None);
     }
 
     #[test]

@@ -147,6 +147,8 @@ impl super::CloudProvider for AzureProvider {
             ));
         }
 
+        let costs = self.fetch_costs(&account.id, &mut warnings);
+
         Ok(build_topology(AzureInventory {
             account,
             groups,
@@ -158,7 +160,50 @@ impl super::CloudProvider for AzureProvider {
             sshkeys,
             aks,
             restore_points,
+            costs,
             warnings,
         }))
+    }
+}
+
+/// Cost Management query: month-to-date actual cost per resource, one POST
+/// for the whole subscription. `az` has no built-in command for this API
+/// (`az costmanagement` is an extension), so go through `az rest`, which
+/// reuses the CLI's login.
+const COST_QUERY_BODY: &str = r#"{"type":"ActualCost","timeframe":"MonthToDate","dataset":{"granularity":"None","aggregation":{"totalCost":{"name":"Cost","function":"Sum"}},"grouping":[{"type":"Dimension","name":"ResourceId"}]}}"#;
+
+impl AzureProvider {
+    /// Best-effort: needs the Cost Management Reader role and the API
+    /// throttles aggressively, so failures become a warning and the topology
+    /// simply renders without cost badges.
+    fn fetch_costs(&self, subscription_id: &str, warnings: &mut Vec<String>) -> Vec<AzCostRow> {
+        let url = format!(
+            "https://management.azure.com/subscriptions/{subscription_id}/providers/Microsoft.CostManagement/query?api-version=2023-03-11"
+        );
+        let args = [
+            "rest",
+            "--method",
+            "post",
+            "--url",
+            &url,
+            "--headers",
+            "Content-Type=application/json",
+            "--body",
+            COST_QUERY_BODY,
+        ];
+        match az_json::<AzCostQueryResponse>(self.exec.as_ref(), &args) {
+            Ok(response) => {
+                if response.truncated() {
+                    warnings.push(
+                        "cost query returned more resources than one page; some cards may miss cost data".into(),
+                    );
+                }
+                response.resource_costs()
+            }
+            Err(e) => {
+                warnings.push(format!("cost query failed: {}", e.message));
+                Vec::new()
+            }
+        }
     }
 }
