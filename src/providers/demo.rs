@@ -426,11 +426,15 @@ pub fn demo_topology() -> Topology {
     // badge and has no standalone card.
     let mut attach = |name: &str, items: &[(&str, &str, bool, Option<f64>)]| {
         if let Some(node) = nodes.iter_mut().find(|n| n.name == name) {
+            // Ids live under the owner's resource group — like the real
+            // mapper's ids, they feed the details panel's delete commands.
+            let rg = node.group.clone().unwrap_or_else(|| "rg-app".into());
             node.attachments = items
                 .iter()
                 .map(|&(kind, name, shared, cost)| Attachment {
                     kind: kind.to_string(),
                     name: name.to_string(),
+                    id: Some(id(&rg, name)),
                     shared,
                     cost,
                 })
@@ -658,6 +662,7 @@ mod tests {
             vec![Attachment {
                 kind: "slot".into(),
                 name: "staging".into(),
+                id: Some(id("rg-app", "staging")),
                 shared: false,
                 cost: None,
             }]
