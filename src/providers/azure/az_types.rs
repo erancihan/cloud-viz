@@ -107,14 +107,31 @@ pub struct AzWebApp {
     pub app_service_plan_id: Option<String>,
 }
 
-/// One entry of `az vm list` — only the SSH key material is read, to match
-/// VMs to `Microsoft.Compute/sshPublicKeys` resources (ARM copies the key
-/// text into the VM's osProfile instead of referencing the key resource).
+/// One entry of `az vm list` — the SSH key material (to match VMs to
+/// `Microsoft.Compute/sshPublicKeys` resources; ARM copies the key text into
+/// the VM's osProfile instead of referencing the key resource) and the boot
+/// diagnostics storage URI (to associate the VM with its storage account).
 #[derive(Debug, Clone, Deserialize)]
 pub struct AzVm {
     pub id: String,
     #[serde(default, rename = "osProfile")]
     pub os_profile: Option<AzOsProfile>,
+    #[serde(default, rename = "diagnosticsProfile")]
+    pub diagnostics_profile: Option<AzDiagnosticsProfile>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct AzDiagnosticsProfile {
+    #[serde(default, rename = "bootDiagnostics")]
+    pub boot_diagnostics: Option<AzBootDiagnostics>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct AzBootDiagnostics {
+    /// `https://<account>.blob.core.windows.net/` — absent (managed storage)
+    /// on most modern VMs.
+    #[serde(default, rename = "storageUri")]
+    pub storage_uri: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -191,6 +208,120 @@ pub struct AzAksCluster {
 pub struct AzIdRef {
     #[serde(default)]
     pub id: Option<String>,
+}
+
+/// One entry of `az snapshot list` — the source disk it was taken from.
+#[derive(Debug, Clone, Deserialize)]
+pub struct AzSnapshot {
+    pub id: String,
+    #[serde(default, rename = "creationData")]
+    pub creation_data: Option<AzCreationData>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct AzCreationData {
+    #[serde(default, rename = "sourceResourceId")]
+    pub source_resource_id: Option<String>,
+}
+
+/// One entry of `az network bastion list` — the AzureBastionSubnet it sits
+/// in ties the host to its virtual network.
+#[derive(Debug, Clone, Deserialize)]
+pub struct AzBastion {
+    pub id: String,
+    #[serde(default, rename = "ipConfigurations")]
+    pub ip_configurations: Vec<AzNicIpConfiguration>,
+}
+
+/// One entry of `az vmss list` — the subnet its instances' NICs attach to.
+#[derive(Debug, Clone, Deserialize)]
+pub struct AzVmss {
+    pub id: String,
+    #[serde(default, rename = "virtualMachineProfile")]
+    pub virtual_machine_profile: Option<AzVmssProfile>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct AzVmssProfile {
+    #[serde(default, rename = "networkProfile")]
+    pub network_profile: Option<AzVmssNetProfile>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct AzVmssNetProfile {
+    #[serde(default, rename = "networkInterfaceConfigurations")]
+    pub nic_configs: Vec<AzVmssNicConfig>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct AzVmssNicConfig {
+    #[serde(default, rename = "ipConfigurations")]
+    pub ip_configurations: Vec<AzNicIpConfiguration>,
+}
+
+impl AzVmss {
+    /// The first subnet its NIC configurations reference.
+    pub fn subnet_id(&self) -> Option<&str> {
+        self.virtual_machine_profile
+            .as_ref()?
+            .network_profile
+            .as_ref()?
+            .nic_configs
+            .iter()
+            .flat_map(|c| &c.ip_configurations)
+            .find_map(|ip| ip.subnet.as_ref()?.id.as_deref())
+    }
+}
+
+/// One entry of `az postgres flexible-server list` — vnet-integrated servers
+/// carry the delegated subnet they live in.
+#[derive(Debug, Clone, Deserialize)]
+pub struct AzPgFlexServer {
+    pub id: String,
+    #[serde(default)]
+    pub network: Option<AzPgNetwork>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct AzPgNetwork {
+    #[serde(default, rename = "delegatedSubnetResourceId")]
+    pub delegated_subnet_resource_id: Option<String>,
+}
+
+/// One entry of `az backup item list` (per Recovery Services vault). The
+/// protected resource sits under `properties`, but we accept the flattened
+/// shape too, mirroring [`AzRestorePointCollection`].
+#[derive(Debug, Clone, Deserialize)]
+pub struct AzBackupItem {
+    #[serde(default, rename = "virtualMachineId")]
+    pub virtual_machine_id: Option<String>,
+    #[serde(default, rename = "sourceResourceId")]
+    pub source_resource_id: Option<String>,
+    #[serde(default)]
+    pub properties: Option<AzBackupItemProps>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct AzBackupItemProps {
+    #[serde(default, rename = "virtualMachineId")]
+    pub virtual_machine_id: Option<String>,
+    #[serde(default, rename = "sourceResourceId")]
+    pub source_resource_id: Option<String>,
+}
+
+impl AzBackupItem {
+    /// The protected resource's ARM id, flattened or nested.
+    pub fn protected_id(&self) -> Option<&str> {
+        self.virtual_machine_id
+            .as_deref()
+            .or(self.source_resource_id.as_deref())
+            .or_else(|| {
+                let p = self.properties.as_ref()?;
+                p.virtual_machine_id
+                    .as_deref()
+                    .or(p.source_resource_id.as_deref())
+            })
+    }
 }
 
 /// Response of the Cost Management query API (`az rest --method post …/

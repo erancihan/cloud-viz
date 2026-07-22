@@ -264,6 +264,50 @@ pub fn demo_topology() -> Topology {
         },
     ]);
 
+    // A consumption plan hosting a function app — function apps come from
+    // `az functionapp list` and carry their own label.
+    let plan_fn = id("rg-app", "plan-functions");
+    defs.extend([
+        Def {
+            id: plan_fn.clone(),
+            // Short on purpose: the narrow single-app box must still fit
+            // its cost badge next to the name.
+            name: "plan-fn",
+            kind: "Microsoft.Web/serverfarms",
+            kind_label: "App Service plan",
+            category: Web,
+            parent: None,
+            container: true,
+            group: Some("rg-app"),
+            metadata: vec![("sku", "Y1")],
+        },
+        Def {
+            id: id("rg-app", "func-events"),
+            name: "func-events",
+            kind: "Microsoft.Web/sites",
+            kind_label: "Function app",
+            category: Web,
+            parent: Some(plan_fn.clone()),
+            container: false,
+            group: Some("rg-app"),
+            metadata: vec![("runtime", "dotnet-isolated")],
+        },
+    ]);
+
+    // A vnet-integrated database, nested in the data subnet like the Azure
+    // mapper does for delegated PostgreSQL flexible servers.
+    defs.push(Def {
+        id: id("rg-data", "pg-flex-main"),
+        name: "pg-flex-main",
+        kind: "Microsoft.DBforPostgreSQL/flexibleServers",
+        kind_label: "PostgreSQL server",
+        category: Database,
+        parent: Some(snet_data.clone()),
+        container: false,
+        group: Some("rg-data"),
+        metadata: vec![("sku", "Standard_D2ds_v4")],
+    });
+
     // Free resources — positioned by their dependency edges.
     defs.extend([
         leaf(
@@ -396,6 +440,42 @@ pub fn demo_topology() -> Topology {
             Other,
             vec![],
         ),
+        // More monitoring debris — gathers into the "Monitoring" box with
+        // the workspace (the lowercase namespace mimics real casing drift).
+        leaf(
+            "rg-ops",
+            "appi-portal",
+            "Microsoft.Insights/components",
+            "Application Insights",
+            Other,
+            vec![],
+        ),
+        leaf(
+            "rg-ops",
+            "ag-oncall",
+            "microsoft.insights/actionGroups",
+            "Action group",
+            Other,
+            vec![],
+        ),
+        // A snapshot of the decommissioned disk and the vault backing up a
+        // VM — the association edges the new listings produce.
+        leaf(
+            "rg-app",
+            "snap-decom",
+            "Microsoft.Compute/snapshots",
+            "Snapshot",
+            Compute,
+            vec![],
+        ),
+        leaf(
+            "rg-ops",
+            "rsv-backup",
+            "Microsoft.RecoveryServices/vaults",
+            "Recovery Services vault",
+            Other,
+            vec![],
+        ),
     ]);
 
     let mut nodes: Vec<TopologyNode> = defs
@@ -489,6 +569,9 @@ pub fn demo_topology() -> Topology {
         ("log-contoso", 7.75),
         ("disk-decom", 5.63),
         ("pip-reserved", 2.92),
+        ("func-events", 3.10),
+        ("pg-flex-main", 42.00),
+        ("rsv-backup", 6.25),
     ] {
         set_cost(name, cost);
     }
@@ -507,6 +590,18 @@ pub fn demo_topology() -> Topology {
             id("rg-data", "sqlsrv-main"),
             EdgeKind::Association,
             "on server",
+        ),
+        (
+            id("rg-app", "snap-decom"),
+            id("rg-app", "disk-decom"),
+            EdgeKind::Association,
+            "snapshot of",
+        ),
+        (
+            id("rg-ops", "rsv-backup"),
+            id("rg-app", "vm-web-01"),
+            EdgeKind::Association,
+            "backs up",
         ),
     ];
 
@@ -645,6 +740,19 @@ mod tests {
             .attachments
             .iter()
             .any(|a| a.kind == "restore point"));
+        // Monitoring debris — workspace, App Insights, action group —
+        // gathers into the "Monitoring" box (kind-prefix match, so the
+        // lowercase `microsoft.insights` namespace lands there too).
+        let monitoring = by_name("Monitoring");
+        assert!(monitoring.container);
+        assert_eq!(monitoring.kind_label, "Management");
+        for member in ["log-contoso", "appi-portal", "ag-oncall"] {
+            assert_eq!(
+                by_name(member).parent_id.as_deref(),
+                Some(monitoring.id.as_str()),
+                "{member} should sit in the Monitoring box"
+            );
+        }
     }
 
     #[test]
