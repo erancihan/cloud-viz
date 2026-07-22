@@ -458,6 +458,25 @@ pub fn demo_topology() -> Topology {
             Other,
             vec![],
         ),
+        // An edgeless NSG and an unwired container group — both gather into
+        // "Detached" boxes (unlike nsg-web, whose protects edge keeps it
+        // free next to its subnet).
+        leaf(
+            "rg-network",
+            "nsg-stale",
+            "Microsoft.Network/networkSecurityGroups",
+            "Network security group",
+            Network,
+            vec![],
+        ),
+        leaf(
+            "rg-app",
+            "aci-jobs",
+            "Microsoft.ContainerInstance/containerGroups",
+            "Container instances",
+            Containers,
+            vec![],
+        ),
         // A snapshot of the decommissioned disk and the vault backing up a
         // VM — the association edges the new listings produce.
         leaf(
@@ -730,6 +749,8 @@ mod tests {
             ("Public IP addresses", "pip-reserved", "Detached"),
             ("Network Watchers", "nw-westeurope", "Regional"),
             ("Container registries", "acrcontoso", "Detached"),
+            ("Network security groups", "nsg-stale", "Detached"),
+            ("Container instances", "aci-jobs", "Detached"),
         ] {
             let g = by_name(group);
             assert!(g.container, "{group} should be a container");
