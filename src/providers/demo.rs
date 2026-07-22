@@ -729,6 +729,7 @@ mod tests {
             ("Managed disks", "disk-decom", "Detached"),
             ("Public IP addresses", "pip-reserved", "Detached"),
             ("Network Watchers", "nw-westeurope", "Regional"),
+            ("Container registries", "acrcontoso", "Detached"),
         ] {
             let g = by_name(group);
             assert!(g.container, "{group} should be a container");
