@@ -153,6 +153,53 @@ impl super::CloudProvider for AzureProvider {
             ));
         }
 
+        // `az webapp list` omits function apps — they have their own listing
+        // but the same shape (only the plan linkage is read).
+        let functionapps: Vec<AzWebApp> = self.try_list(
+            &with_scope(&["functionapp", "list"], &scope_args),
+            &mut warnings,
+        );
+        let snapshots: Vec<AzSnapshot> = self.try_list(
+            &with_scope(&["snapshot", "list"], &scope_args),
+            &mut warnings,
+        );
+        let bastions: Vec<AzBastion> = self.try_list(
+            &with_scope(&["network", "bastion", "list"], &scope_args),
+            &mut warnings,
+        );
+        let vmss: Vec<AzVmss> =
+            self.try_list(&with_scope(&["vmss", "list"], &scope_args), &mut warnings);
+        let postgres: Vec<AzPgFlexServer> = self.try_list(
+            &with_scope(&["postgres", "flexible-server", "list"], &scope_args),
+            &mut warnings,
+        );
+
+        // Backup items only list per vault, so query each Recovery Services
+        // vault (usually a handful) like the restore-point per-RG loop.
+        let mut backup_items: Vec<(String, AzBackupItem)> = Vec::new();
+        for vault in resources.iter().filter(|r| {
+            r.resource_type
+                .eq_ignore_ascii_case("Microsoft.RecoveryServices/vaults")
+        }) {
+            let Some(rg) = vault.resource_group.as_deref() else {
+                continue;
+            };
+            let base = [
+                "backup",
+                "item",
+                "list",
+                "--resource-group",
+                rg,
+                "--vault-name",
+                &vault.name,
+            ];
+            for item in
+                self.try_list::<AzBackupItem>(&with_scope(&base, &scope_args), &mut warnings)
+            {
+                backup_items.push((vault.id.clone(), item));
+            }
+        }
+
         let costs = self.fetch_costs(&account.id, period, &mut warnings);
 
         Ok(build_topology(AzureInventory {
@@ -162,10 +209,16 @@ impl super::CloudProvider for AzureProvider {
             vnets,
             nics,
             webapps,
+            functionapps,
             vms,
             sshkeys,
             aks,
             restore_points,
+            snapshots,
+            bastions,
+            vmss,
+            postgres,
+            backup_items,
             costs,
             warnings,
         }))

@@ -12,10 +12,19 @@ pub struct AzureInventory {
     pub vnets: Vec<AzVnet>,
     pub nics: Vec<AzNic>,
     pub webapps: Vec<AzWebApp>,
+    /// `az functionapp list` — function apps are absent from `az webapp
+    /// list` but share its shape (only the plan linkage is read).
+    pub functionapps: Vec<AzWebApp>,
     pub vms: Vec<AzVm>,
     pub sshkeys: Vec<AzSshKey>,
     pub aks: Vec<AzAksCluster>,
     pub restore_points: Vec<AzRestorePointCollection>,
+    pub snapshots: Vec<AzSnapshot>,
+    pub bastions: Vec<AzBastion>,
+    pub vmss: Vec<AzVmss>,
+    pub postgres: Vec<AzPgFlexServer>,
+    /// Backup items per Recovery Services vault: (vault id, item).
+    pub backup_items: Vec<(String, AzBackupItem)>,
     pub costs: Vec<AzCostRow>,
     pub warnings: Vec<String>,
 }
@@ -150,6 +159,17 @@ pub fn type_label(resource_type: &str) -> String {
         return (*label).to_string();
     }
     let segment = resource_type.rsplit('/').next().unwrap_or(resource_type);
+    let out = decamel_lower(segment);
+    let mut chars = out.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+        None => out,
+    }
+}
+
+/// `virtualNetworkLinks` → `virtual network links`: a space before each
+/// interior uppercase, everything lowercased.
+fn decamel_lower(segment: &str) -> String {
     let mut out = String::with_capacity(segment.len() + 4);
     for (i, ch) in segment.chars().enumerate() {
         if ch.is_ascii_uppercase() && i > 0 {
@@ -157,11 +177,36 @@ pub fn type_label(resource_type: &str) -> String {
         }
         out.push(ch.to_ascii_lowercase());
     }
-    let mut chars = out.chars();
-    match chars.next() {
-        Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
-        None => out,
+    out
+}
+
+/// Generic child-resource fold: a type of the shape `Ns/parentType/childSeg`
+/// (or deeper) whose id carries the parent's id before `/childSeg/` folds
+/// onto the parent's card — extensions, deployment slots, CDN endpoints,
+/// email domains, private DNS zone links… Returns `(owner id, attachment
+/// kind)`. First-class children that must stay their own node are denied.
+fn child_path_fold(
+    resource_type: &str,
+    ty_lower: &str,
+    id_lower: &str,
+) -> Option<(String, String)> {
+    const DENY: &[&str] = &[
+        // Databases are costly first-class resources, not card furniture.
+        "microsoft.sql/servers/databases",
+        // Subnets are containers, built from the vnet listing.
+        "microsoft.network/virtualnetworks/subnets",
+    ];
+    if ty_lower.matches('/').count() < 2 || DENY.contains(&ty_lower) {
+        return None;
     }
+    let seg_lower = ty_lower.rsplit('/').next()?;
+    let marker = format!("/{seg_lower}/");
+    let pos = id_lower.rfind(&marker)?;
+    // Attachment kind from the original-cased segment: `virtualNetworkLinks`
+    // → "virtual network link"; `extensions` → "extension".
+    let seg = resource_type.rsplit('/').next()?;
+    let kind = decamel_lower(seg).trim_end_matches('s').to_string();
+    Some((id_lower[..pos].to_string(), kind))
 }
 
 pub fn build_topology(inv: AzureInventory) -> Topology {
@@ -288,39 +333,30 @@ pub fn build_topology(inv: AzureInventory) -> Topology {
             let Some(owner) = resource.managed_by.as_deref().filter(|m| !m.is_empty()) else {
                 continue; // unattached disk: keep it visible as its own node
             };
-            (norm(owner), "disk")
+            (norm(owner), "disk".to_string())
         } else if ty == "microsoft.network/networkinterfaces" {
             let Some(owner) = nic_vm.get(&id) else {
                 continue; // NIC without a VM stays a node (in its subnet)
             };
-            (owner.clone(), "nic")
-        } else if ty.ends_with("/extensions") || ty.ends_with("/slots") {
-            // Child resources, e.g. Microsoft.Compute/virtualMachines/extensions
-            // (…/virtualMachines/gitlab/extensions/AADSSHLoginForLinux) or
-            // Microsoft.Web/sites/slots (…/sites/app/slots/staging).
-            let (marker, kind) = if ty.ends_with("/extensions") {
-                ("/extensions/", "extension")
-            } else {
-                ("/slots/", "slot")
-            };
-            let Some(pos) = id.rfind(marker) else {
-                continue;
-            };
-            (id[..pos].to_string(), kind)
+            (owner.clone(), "nic".to_string())
         } else if ty == "microsoft.compute/restorepointcollections" {
             // A VM backup: fold onto its source VM. If the source is unknown
             // or gone, it stays a node and gathers into the detached box.
             let Some(vm) = rpc_source.get(&id) else {
                 continue;
             };
-            (vm.clone(), "restore point")
+            (vm.clone(), "restore point".to_string())
+        } else if let Some(fold) = child_path_fold(&resource.resource_type, &ty, &id) {
+            // Any child resource whose parent we know: VM extensions, site
+            // slots, CDN endpoints, email domains, DNS zone links…
+            fold
         } else {
             continue;
         };
         if resource_ids.contains(&owner) {
             let name = resource.name.rsplit('/').next().unwrap_or(&resource.name);
             folded.entry(owner).or_default().push(Attachment {
-                kind: kind.to_string(),
+                kind,
                 name: name.to_string(),
                 id: Some(id.clone()),
                 shared: false,
@@ -399,6 +435,20 @@ pub fn build_topology(inv: AzureInventory) -> Topology {
         }
         metadata.extend(tags_metadata(&resource.tags));
         let cost = cost_of(&id);
+        // Function apps share the sites ARM type with web apps; the `kind`
+        // field ("functionapp,linux", …) is what tells them apart.
+        let kind_label = if resource
+            .resource_type
+            .eq_ignore_ascii_case("microsoft.web/sites")
+            && resource
+                .kind
+                .as_deref()
+                .is_some_and(|k| k.to_lowercase().contains("functionapp"))
+        {
+            "Function app".to_string()
+        } else {
+            type_label(&resource.resource_type)
+        };
         add_node(
             &mut nodes,
             &mut index,
@@ -406,7 +456,7 @@ pub fn build_topology(inv: AzureInventory) -> Topology {
                 id,
                 name: resource.name.clone(),
                 kind: resource.resource_type.clone(),
-                kind_label: type_label(&resource.resource_type),
+                kind_label,
                 category: categorize(&resource.resource_type),
                 parent_id: None,
                 container: resource.resource_type.to_lowercase() == VNET_TYPE,
@@ -489,10 +539,16 @@ pub fn build_topology(inv: AzureInventory) -> Topology {
         }
     }
 
-    // App Services nest inside their App Service plan (`az webapp list`
-    // carries appServicePlanId); a hosting plan renders as a container box.
-    for app in &inv.webapps {
+    // App Services and function apps nest inside their App Service plan
+    // (both listings carry appServicePlanId); a hosting plan renders as a
+    // container box. Some CLI versions list function apps in BOTH listings —
+    // dedupe by id.
+    let mut seen_apps: HashSet<String> = HashSet::new();
+    for app in inv.webapps.iter().chain(inv.functionapps.iter()) {
         let app_id = norm(&app.id);
+        if !seen_apps.insert(app_id.clone()) {
+            continue;
+        }
         let Some(plan) = app.app_service_plan_id.as_deref().filter(|p| !p.is_empty()) else {
             continue;
         };
@@ -650,6 +706,135 @@ pub fn build_topology(inv: AzureInventory) -> Topology {
         }
     }
 
+    // Subnet-anchored services from their own listings: Bastion hosts (via
+    // AzureBastionSubnet), vnet-integrated PostgreSQL flexible servers (via
+    // their delegated subnet), and standalone VM scale sets. Runs AFTER the
+    // AKS pass and only fills an empty parent_id, so AKS node-pool scale
+    // sets stay inside their cluster and nothing double-nests.
+    {
+        let mut nest = |resource_id: &str, subnet: Option<&str>| {
+            let Some(subnet_id) = subnet.map(&norm) else {
+                return;
+            };
+            if !index.contains_key(&subnet_id) {
+                return;
+            }
+            if let Some(&i) = index.get(&norm(resource_id)) {
+                if nodes[i].parent_id.is_none() {
+                    nodes[i].parent_id = Some(subnet_id);
+                }
+            }
+        };
+        for bastion in &inv.bastions {
+            let subnet = bastion
+                .ip_configurations
+                .iter()
+                .find_map(|ip| ip.subnet.as_ref()?.id.as_deref());
+            nest(&bastion.id, subnet);
+        }
+        for server in &inv.postgres {
+            // Public-access servers have no delegated subnet and stay free.
+            let subnet = server
+                .network
+                .as_ref()
+                .and_then(|n| n.delegated_subnet_resource_id.as_deref());
+            nest(&server.id, subnet);
+        }
+        for scale_set in &inv.vmss {
+            nest(&scale_set.id, scale_set.subnet_id());
+        }
+    }
+
+    // Snapshots point at the disk they were taken from; when that disk is
+    // folded into its VM's card, the edge re-anchors onto the VM.
+    let disk_owner: HashMap<String, String> = inv
+        .resources
+        .iter()
+        .filter(|r| {
+            r.resource_type
+                .eq_ignore_ascii_case("microsoft.compute/disks")
+        })
+        .filter_map(|r| {
+            let owner = r.managed_by.as_deref().filter(|m| !m.is_empty())?;
+            Some((norm(&r.id), norm(owner)))
+        })
+        .collect();
+    for snapshot in &inv.snapshots {
+        let Some(source) = snapshot
+            .creation_data
+            .as_ref()
+            .and_then(|c| c.source_resource_id.as_deref())
+        else {
+            continue;
+        };
+        let source = norm(source);
+        let target = if index.contains_key(&source) {
+            source
+        } else if let Some(owner) = disk_owner.get(&source) {
+            owner.clone()
+        } else {
+            continue; // source disk deleted since — nothing to point at
+        };
+        add_edge(
+            norm(&snapshot.id),
+            target,
+            EdgeKind::Association,
+            "snapshot of",
+            &mut edges,
+        );
+    }
+
+    // Boot diagnostics tie a VM to the storage account its console
+    // screenshots land in (`https://<account>.blob.core.windows.net/`);
+    // managed boot diagnostics have no URI and produce no edge.
+    let storage_by_name: HashMap<String, String> = inv
+        .resources
+        .iter()
+        .filter(|r| {
+            r.resource_type
+                .eq_ignore_ascii_case("microsoft.storage/storageaccounts")
+        })
+        .map(|r| (r.name.to_lowercase(), norm(&r.id)))
+        .collect();
+    for vm in &inv.vms {
+        let Some(uri) = vm
+            .diagnostics_profile
+            .as_ref()
+            .and_then(|d| d.boot_diagnostics.as_ref())
+            .and_then(|b| b.storage_uri.as_deref())
+        else {
+            continue;
+        };
+        let host = uri
+            .trim_start_matches("https://")
+            .trim_start_matches("http://");
+        let account = host.split('.').next().unwrap_or_default().to_lowercase();
+        if let Some(storage_id) = storage_by_name.get(&account) {
+            add_edge(
+                norm(&vm.id),
+                storage_id.clone(),
+                EdgeKind::Association,
+                "boot diagnostics",
+                &mut edges,
+            );
+        }
+    }
+
+    // Recovery Services vaults protect VMs (and other sources) — surface
+    // each protected item as a "backs up" edge from the vault.
+    for (vault_id, item) in &inv.backup_items {
+        let Some(protected) = item.protected_id() else {
+            continue;
+        };
+        add_edge(
+            norm(vault_id),
+            norm(protected),
+            EdgeKind::Association,
+            "backs up",
+            &mut edges,
+        );
+    }
+
     let mut topology = Topology {
         provider: "azure".into(),
         scope_id: inv.account.id.clone(),
@@ -688,11 +873,17 @@ mod tests {
             vnets: serde_json::from_str(include_str!("fixtures/vnets.json")).unwrap(),
             nics: serde_json::from_str(include_str!("fixtures/nics.json")).unwrap(),
             webapps: serde_json::from_str(include_str!("fixtures/webapps.json")).unwrap(),
+            functionapps: serde_json::from_str(include_str!("fixtures/functionapps.json")).unwrap(),
             vms: serde_json::from_str(include_str!("fixtures/vms.json")).unwrap(),
             sshkeys: serde_json::from_str(include_str!("fixtures/sshkeys.json")).unwrap(),
             aks: serde_json::from_str(include_str!("fixtures/aks.json")).unwrap(),
             restore_points: serde_json::from_str(include_str!("fixtures/restore-points.json"))
                 .unwrap(),
+            snapshots: serde_json::from_str(include_str!("fixtures/snapshots.json")).unwrap(),
+            bastions: serde_json::from_str(include_str!("fixtures/bastions.json")).unwrap(),
+            vmss: serde_json::from_str(include_str!("fixtures/vmss.json")).unwrap(),
+            postgres: serde_json::from_str(include_str!("fixtures/postgres.json")).unwrap(),
+            backup_items: serde_json::from_str(include_str!("fixtures/backup-items.json")).unwrap(),
             costs: serde_json::from_str::<AzCostQueryResponse>(include_str!("fixtures/costs.json"))
                 .unwrap()
                 .resource_costs(),
@@ -755,7 +946,7 @@ mod tests {
             .iter()
             .filter(|n| n.kind_label == "Subnet")
             .collect();
-        assert_eq!(subnets.len(), 2);
+        assert_eq!(subnets.len(), 3); // snet-a, snet-b, AzureBastionSubnet
         for s in &subnets {
             assert_eq!(s.parent_id.as_deref(), Some(vnet.id.as_str()));
             assert!(s.container, "subnets hold their members now");
@@ -964,6 +1155,150 @@ mod tests {
     }
 
     #[test]
+    fn generic_child_paths_fold_into_their_parent() {
+        let t = build();
+        // CDN endpoint rides on its profile's card…
+        let cdn = find(&t, "cdn-apps");
+        let ep = cdn
+            .attachments
+            .iter()
+            .find(|a| a.kind == "endpoint")
+            .expect("endpoint folded onto the CDN profile");
+        assert_eq!(ep.name, "ep-portal");
+        assert!(ep.id.as_deref().unwrap().ends_with("/endpoints/ep-portal"));
+        assert!(!t.nodes.iter().any(|n| n.name == "cdn-apps/ep-portal"));
+        // …an email domain on its email service's.
+        let mail = find(&t, "mail-contoso");
+        let dom = mail
+            .attachments
+            .iter()
+            .find(|a| a.kind == "domain")
+            .expect("domain folded onto the email service");
+        assert_eq!(dom.name, "contoso.com");
+        // A child whose parent isn't in the inventory keeps its own card.
+        assert!(t.nodes.iter().any(|n| n.name == "ghost-zone/link-a"));
+        // Databases are denied — first-class resources, never card furniture.
+        assert!(t.nodes.iter().any(|n| n.name == "sql-main/ordersdb"));
+        assert!(find(&t, "sql-main").attachments.is_empty());
+    }
+
+    #[test]
+    fn function_apps_nest_in_their_plan_with_their_own_label() {
+        let t = build();
+        let func = find(&t, "func-worker");
+        assert_eq!(func.kind_label, "Function app");
+        let plan = find(&t, "ASP-workers");
+        assert!(plan.container, "a plan holding a function app is a box");
+        assert_eq!(func.parent_id.as_deref(), Some(plan.id.as_str()));
+        // app-portal appears in BOTH listings — dedupe keeps it where it was.
+        assert_eq!(
+            find(&t, "app-portal").parent_id.as_deref(),
+            Some(find(&t, "plan-portal").id.as_str())
+        );
+    }
+
+    #[test]
+    fn subnet_anchored_services_nest_without_double_nesting() {
+        let t = build();
+        let by = |name: &str| find(&t, name);
+        let snet_a = t
+            .nodes
+            .iter()
+            .find(|n| n.name == "snet-a")
+            .unwrap()
+            .id
+            .clone();
+        // Bastion sits in its AzureBastionSubnet; the delegated Postgres in
+        // its subnet; the standalone scale set in the subnet its NICs use.
+        assert!(by("bast-hub")
+            .parent_id
+            .as_deref()
+            .unwrap()
+            .ends_with("/azurebastionsubnet"));
+        assert_eq!(by("pg-flex-a").parent_id.as_deref(), Some(snet_a.as_str()));
+        assert_eq!(
+            by("vmss-runners").parent_id.as_deref(),
+            Some(snet_a.as_str())
+        );
+        // Public-access Postgres has no delegated subnet — stays free.
+        assert_eq!(by("pg-flex-pub").parent_id, None);
+        // The AKS node pool is listed by `az vmss list` too but must stay
+        // inside its cluster, not jump into the subnet.
+        assert_eq!(
+            by("aks-nodepool1-vmss").parent_id.as_deref(),
+            Some(find(&t, "aks-rex").id.as_str())
+        );
+    }
+
+    #[test]
+    fn snapshot_backup_and_boot_diagnostics_edges() {
+        let t = build();
+        let edge = |label: &str| {
+            t.edges
+                .iter()
+                .find(|e| e.label.as_deref() == Some(label))
+                .unwrap_or_else(|| panic!("no {label} edge"))
+        };
+        // Snapshot of a folded disk re-anchors onto the disk's VM.
+        let snap = edge("snapshot of");
+        assert!(snap.source.ends_with("/snapshots/snap-data"));
+        assert!(snap.target.ends_with("/virtualmachines/vm-web-01"));
+        // Boot diagnostics tie the VM to its storage account by name.
+        let diag = edge("boot diagnostics");
+        assert!(diag.source.ends_with("/vm-web-01"));
+        assert!(diag.target.ends_with("/storageaccounts/ststray"));
+        // The vault backs up vm-web-02.
+        let backup = edge("backs up");
+        assert!(backup.source.ends_with("/vaults/rsv-main"));
+        assert!(backup.target.ends_with("/vm-web-02"));
+    }
+
+    #[test]
+    fn vnet_delete_plan_empties_subnets_first() {
+        let t = build();
+        let idx = t.nodes.iter().position(|n| n.name == "vnet-hub").unwrap();
+        let plan = crate::model::delete_plan(&t, idx).expect("vnets get a plan");
+        let pos = |label: &str| {
+            plan.steps
+                .iter()
+                .position(|s| s.label.contains(label))
+                .unwrap_or_else(|| panic!("no step for {label}"))
+        };
+        // Members leave before the vnet; subnets never get their own step —
+        // `az network vnet delete` removes them.
+        assert!(pos("Virtual machine vm-web-01") < pos("Virtual network vnet-hub"));
+        assert_eq!(pos("Virtual network vnet-hub"), plan.steps.len() - 1);
+        assert!(!plan.steps.iter().any(|s| s.label.starts_with("Subnet ")));
+        assert!(plan.notes.iter().any(|n| n.contains("snet-a")));
+
+        // vm-web-02 sits outside the vnet (no NIC); its own plan carries the
+        // backup-protection warning from the vault's "backs up" edge.
+        let idx = t.nodes.iter().position(|n| n.name == "vm-web-02").unwrap();
+        let plan = crate::model::delete_plan(&t, idx).unwrap();
+        assert!(plan
+            .notes
+            .iter()
+            .any(|n| n.contains("rsv-main") && n.contains("disable its protection")));
+    }
+
+    #[test]
+    fn monitoring_debris_gathers_into_management_box() {
+        let t = build();
+        let bx = find(&t, "Monitoring");
+        assert!(bx.container);
+        assert_eq!(bx.kind_label, "Management");
+        // Membership is by lowercased ARM type prefix, so the drifted-casing
+        // action group lands next to the dashboard.
+        for name in ["ag-oncall", "dash-main"] {
+            assert_eq!(
+                find(&t, name).parent_id.as_deref(),
+                Some(bx.id.as_str()),
+                "{name} should sit in the Monitoring box"
+            );
+        }
+    }
+
+    #[test]
     fn attachments_carry_ids_and_yield_ordered_delete_plans() {
         let t = build();
         let vm = find(&t, "vm-web-01");
@@ -984,7 +1319,8 @@ mod tests {
             .unwrap()
             .ends_with("/networkinterfaces/nic-web-01"));
 
-        let plan = crate::model::delete_plan(vm).expect("a VM gets a delete plan");
+        let vm_index = t.nodes.iter().position(|n| n.name == "vm-web-01").unwrap();
+        let plan = crate::model::delete_plan(&t, vm_index).expect("a VM gets a delete plan");
         let pos = |label: &str| {
             plan.steps
                 .iter()

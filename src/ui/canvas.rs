@@ -114,6 +114,7 @@ pub fn show(
 
     // Paint order: containers (parents already precede children), then edges,
     // then leaf cards, so relaxed curves never cover node content.
+    let subtree = crate::model::subtree_costs(topology);
     for placed in &layout.placed {
         if placed.is_container {
             draw_container(
@@ -124,6 +125,7 @@ pub fn show(
                 theme,
                 camera.zoom,
                 selected == Some(placed.index),
+                subtree[placed.index],
             );
         }
     }
@@ -291,6 +293,7 @@ fn draw_dot_grid(painter: &Painter, rect: Rect, camera: &Camera, theme: &Theme) 
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn draw_container(
     painter: &Painter,
     topology: &Topology,
@@ -299,6 +302,7 @@ fn draw_container(
     theme: &Theme,
     zoom: f32,
     selected: bool,
+    subtree_cost: Option<f64>,
 ) {
     let node = &topology.nodes[placed.index];
     let cat = theme.category_color(node.category);
@@ -347,16 +351,40 @@ fn draw_container(
             kind_font,
             c32(cat),
         );
-        painter.text(
+        let name_rect = painter.text(
             Pos2::new(kind_rect.right() + 10.0 * zoom, baseline.y - 1.5 * zoom),
             Align2::LEFT_TOP,
             &node.name,
             name_font,
             c32(theme.ink),
         );
+        // Right side of the header: subtree cost, then the child count to
+        // its left. The badge sums the box's own cost plus everything nested
+        // inside — how the bill reads for a plan or a vnet. On a box too
+        // narrow to fit it next to the name it drops to the header's second
+        // line instead of overlapping.
+        let mut right = rect.right() - pad;
+        if let Some(total) = subtree_cost {
+            let galley = painter.layout_no_wrap(
+                format_cost(total, topology.currency.as_deref()),
+                FontId::proportional((10.5 * zoom).max(5.0)),
+                c32(theme.ink_2),
+            );
+            let badge_left = right - galley.rect.width();
+            if badge_left - 8.0 * zoom > name_rect.right() {
+                painter.galley(Pos2::new(badge_left, baseline.y), galley, c32(theme.ink_2));
+                right = badge_left - 8.0 * zoom;
+            } else {
+                painter.galley(
+                    Pos2::new(badge_left, rect.min.y + 34.0 * zoom),
+                    galley,
+                    c32(theme.ink_2),
+                );
+            }
+        }
         if placed.child_count > 0 {
             painter.text(
-                Pos2::new(rect.right() - pad, baseline.y),
+                Pos2::new(right, baseline.y),
                 Align2::RIGHT_TOP,
                 placed.child_count.to_string(),
                 FontId::proportional((11.0 * zoom).max(5.0)),

@@ -1,0 +1,38 @@
+[
+  {
+    "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-app/providers/Microsoft.Compute/virtualMachineScaleSets/vmss-runners",
+    "virtualMachineProfile": {
+      "networkProfile": {
+        "networkInterfaceConfigurations": [
+          {
+            "ipConfigurations": [
+              {
+                "subnet": {
+                  "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-net/providers/Microsoft.Network/virtualNetworks/vnet-hub/subnets/snet-a"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    }
+  },
+  {
+    "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/MC_rg-app_aks-rex_eastus2/providers/Microsoft.Compute/virtualMachineScaleSets/aks-nodepool1-vmss",
+    "virtualMachineProfile": {
+      "networkProfile": {
+        "networkInterfaceConfigurations": [
+          {
+            "ipConfigurations": [
+              {
+                "subnet": {
+                  "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-net/providers/Microsoft.Network/virtualNetworks/vnet-hub/subnets/snet-a"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    }
+  }
+]

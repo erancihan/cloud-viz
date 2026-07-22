@@ -470,6 +470,15 @@ impl CloudVizApp {
             return;
         };
         let currency = topology.currency.clone();
+        // Containers show the rolled-up subtree cost (what the box badge
+        // displays) instead of the per-attachment breakdown leaves get.
+        let subtree_total = node
+            .container
+            .then(|| subtree_costs(topology)[selected])
+            .flatten();
+        // Teardown needs the whole graph (edge dependents, container
+        // children), so build it before the panel borrows anything.
+        let plan = delete_plan(topology, selected);
 
         let mut open = true;
         egui::SidePanel::right("details")
@@ -565,8 +574,32 @@ impl CloudVizApp {
 
                     // The selected period's spend — the card badge's number,
                     // itemized: the resource itself, then each folded-in
-                    // subsidiary that accrued cost, then the total.
-                    if let Some(total) = node.total_cost() {
+                    // subsidiary that accrued cost, then the total. Containers
+                    // instead show the badge's subtree rollup.
+                    if let Some(total) = subtree_total {
+                        let currency = currency.as_deref();
+                        let title = format!("Cost · {}", self.cost_period.label());
+                        section(ui, &theme, &title, true, |ui| {
+                            ui.add_space(4.0);
+                            if let Some(own) = node.cost {
+                                cost_row(
+                                    ui,
+                                    &theme,
+                                    "This resource",
+                                    &format_cost(own, currency),
+                                    false,
+                                );
+                            }
+                            cost_row(
+                                ui,
+                                &theme,
+                                "Everything inside",
+                                &format_cost(total, currency),
+                                true,
+                            );
+                            ui.add_space(4.0);
+                        });
+                    } else if let Some(total) = node.total_cost() {
                         let currency = currency.as_deref();
                         let title = format!("Cost · {}", self.cost_period.label());
                         section(ui, &theme, &title, true, |ui| {
@@ -606,7 +639,7 @@ impl CloudVizApp {
                     // Teardown commands: the resource and everything folded
                     // into its card, dependency-ordered so nothing is left
                     // behind. Collapsed by default — it's the dangerous one.
-                    if let Some(plan) = delete_plan(&node) {
+                    if let Some(plan) = &plan {
                         section(ui, &theme, "Delete", false, |ui| {
                             ui.add_space(4.0);
                             ui.add(

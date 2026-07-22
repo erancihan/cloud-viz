@@ -7,7 +7,7 @@ use crate::geom::{label_t, route_edge};
 use crate::layout::{
     layout_topology, secondary_split_index, Rect, ATTACH_PAD, ATTACH_ROW, ATTACH_SPLIT, LEAF_H,
 };
-use crate::model::{format_cost, EdgeKind, ResourceCategory, Topology};
+use crate::model::{format_cost, subtree_costs, EdgeKind, ResourceCategory, Topology};
 use crate::theme::{mix, Rgb, Theme};
 use std::fmt::Write;
 
@@ -32,6 +32,7 @@ pub fn to_svg(topology: &Topology, theme: &Theme) -> String {
 
     // Containers first, then edges, then cards on top so loose curves never
     // obscure node content.
+    let subtree = subtree_costs(topology);
     for placed in &layout.placed {
         if !placed.is_container {
             continue;
@@ -79,11 +80,39 @@ pub fn to_svg(topology: &Topology, theme: &Theme) -> String {
             theme.ink.hex(),
             escape(&node.name)
         );
+        // Right side of the header: subtree cost badge (own + everything
+        // nested inside), then the child count to its left. Mirrors the
+        // canvas painter. ~6.3px per character at font-size 10.5; the name
+        // runs ~7.2px per character at 14px. A box too narrow to fit the
+        // badge next to the name moves it to the header's second line.
+        let name_end = r.x
+            + 18.0
+            + node.kind_label.chars().count() as f32 * 8.4
+            + 14.0
+            + node.name.chars().count() as f32 * 7.2;
+        let mut right = r.right() - 16.0;
+        if let Some(total) = subtree[placed.index] {
+            let cost = format_cost(total, topology.currency.as_deref());
+            let width = cost.chars().count() as f32 * 6.3;
+            let fits_header = right - width - 8.0 > name_end;
+            let y = if fits_header { r.y + 24.0 } else { r.y + 46.0 };
+            let _ = write!(
+                svg,
+                r#"<text x="{:.1}" y="{:.1}" font-size="10.5" fill="{}" text-anchor="end">{}</text>"#,
+                right,
+                y,
+                theme.ink_2.hex(),
+                escape(&cost)
+            );
+            if fits_header {
+                right -= width + 8.0;
+            }
+        }
         if placed.child_count > 0 {
             let _ = write!(
                 svg,
                 r#"<text x="{:.1}" y="{:.1}" font-size="11" fill="{}" text-anchor="end">{}</text>"#,
-                r.right() - 16.0,
+                right,
                 r.y + 24.0,
                 theme.ink_3.hex(),
                 placed.child_count
@@ -503,7 +532,20 @@ mod tests {
         // vm-web-01: own 33.58 + attached disk 3.20; lb-web: 18.26 + 2.92.
         assert!(svg.contains(">$36.78<"), "vm total cost badge missing");
         assert!(svg.contains(">$21.18<"), "lb total cost badge missing");
-        // A card without cost data shows no zero badge.
+        // Containers roll up their subtree: snet-web covers the two web VMs
+        // (36.78 + 33.58); vnet-hub adds the delegated Postgres in snet-data
+        // (+42.00); the AKS box its node pool + lb (61.44 + 2.92); each plan
+        // box its app; the "Managed disks" detached box and the Monitoring
+        // box their members (badge on the leaf AND the box).
+        assert!(svg.contains(">$70.36<"), "subnet rollup missing");
+        assert!(svg.contains(">$112.36<"), "vnet rollup missing");
+        assert!(svg.contains(">$64.36<"), "AKS box rollup missing");
+        assert_eq!(svg.matches(">$12.41<").count(), 2, "plan box rollup");
+        assert_eq!(svg.matches(">$3.10<").count(), 2, "function plan rollup");
+        assert_eq!(svg.matches(">$42.00<").count(), 2, "data subnet rollup");
+        assert_eq!(svg.matches(">$5.63<").count(), 2, "detached disk box");
+        assert_eq!(svg.matches(">$7.75<").count(), 2, "monitoring box");
+        // A card or box without cost data shows no zero badge.
         assert!(!svg.contains(">$0.00<"));
     }
 }

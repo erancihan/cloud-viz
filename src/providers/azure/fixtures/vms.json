@@ -14,6 +14,12 @@
           ]
         }
       }
+    },
+    "diagnosticsProfile": {
+      "bootDiagnostics": {
+        "enabled": true,
+        "storageUri": "https://ststray.blob.core.windows.net/"
+      }
     }
   },
   {

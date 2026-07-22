@@ -50,18 +50,26 @@ cargo run -- --export-svg topo.svg --provider azure      # your live estate
   The resource group shows as card subtext instead of a container box (the
   subscription is already in the toolbar).
 - Folds subsidiary resources into their owner's card instead of drawing
-  them as nodes: attached managed disks (via ARM's `managedBy`), NICs, VM
-  extensions, deployment slots, SSH keys, public IPs, and VM restore point
-  collections (via each collection's `source.id`, read per-RG) render as
-  icon rows on the owner's card, with the full list also in the details
-  panel. Hardware rows come first; credentials / reachability / backups (SSH
-  keys, public IPs, restore points) sit below their own separator, colored
-  by category, with a link icon when shared across nodes (an SSH key on
-  several VMs). Unused keys, unattached disks and IPs stay visible in dashed
-  "Detached …" boxes; regional services (network watchers) group under a
-  "Regional" box instead — both styled like a virtual network so they don't
-  scatter. Remaining relationships (NSG → subnet/VM, app → db, …) route as
-  relaxed beziers.
+  them as nodes: attached managed disks (via ARM's `managedBy`), NICs,
+  public IPs, SSH keys, VM restore point collections (via each collection's
+  `source.id`, read per-RG), and — generically — any child resource whose
+  parent is on the canvas (VM extensions, deployment slots, CDN endpoints,
+  email domains, private DNS zone links…) render as icon rows on the
+  owner's card, with the full list also in the details panel. Hardware rows
+  come first; credentials / reachability / backups sit below their own
+  separator, colored by category, with a link icon when shared across nodes
+  (an SSH key on several VMs). Unused keys, unattached disks and IPs stay
+  visible in dashed "Detached …" boxes; regional services (network
+  watchers) group under a "Regional" box; monitoring debris (alert rules,
+  action groups, dashboards, App Insights, Log Analytics workspaces)
+  gathers into a "Monitoring" box — all styled like a virtual network so
+  they don't scatter. Remaining relationships (NSG → subnet/VM, snapshot →
+  disk, vault → VM, VM → diagnostics storage, …) route as relaxed beziers.
+- Nests services into the subnet they live in even without a NIC: Bastion
+  hosts (their AzureBastionSubnet), vnet-integrated PostgreSQL flexible
+  servers (their delegated subnet), standalone VM scale sets — and function
+  apps into their App Service plan (`az functionapp list`; `az webapp list`
+  omits them).
 - Shows cost on each card (top-right badge): one Cost Management query per
   subscription (`az rest` — actual cost grouped by ResourceId), so a VM's
   badge is the VM plus everything folded into its card (disks, public IPs,
@@ -70,15 +78,23 @@ cargo run -- --export-svg topo.svg --provider azure      # your live estate
   of the last 12 calendar months; each period caches separately, so
   revisiting a month is instant. Needs the Cost Management Reader role —
   without it the cards simply render without badges (a warning explains
-  why).
+  why). Container boxes (App Service plans, AKS clusters, vnets, subnets,
+  the dashed group boxes) show their whole subtree's total — the plan's
+  charge plus everything nested inside, the way the bill reads.
 - Details panel has a collapsed **Delete** section: the `az` commands that
   remove the resource *and* everything folded into its card, in dependency
   order (restore points, then the resource — freeing its NICs and disks —
   then NICs, then the public IPs those NICs held, then disks, then SSH keys)
-  so nothing is left behind. Shared attachments are never included, child
-  resources (extensions, slots) are noted as dying with their parent, and a
-  copy button grabs the whole script. CloudViz itself never runs them —
-  read-only stays read-only.
+  so nothing is left behind. Edge-connected dependents whose *only*
+  connection is the resource being deleted (an NSG protecting just this VM,
+  a snapshot of just this disk) join the teardown; anything with more
+  connections is excluded with a note, like shared attachments — and a
+  vault backing the resource up becomes a "disable protection first"
+  warning. Virtual networks and subnets get children-first plans: every
+  member's block runs before the vnet delete, and subnets are noted as
+  dying with their vnet. Child resources (extensions, slots) are noted as
+  dying with their parent, and a copy button grabs the whole script.
+  CloudViz itself never runs them — read-only stays read-only.
 - Pan (drag), zoom (scroll, cursor-anchored; +/- buttons by the minimap,
   center-anchored), fit-to-view, clickable minimap, light/dark themes,
   fullscreen (F11), details panel per resource. The screen zoom (Ctrl +/-)
@@ -151,7 +167,11 @@ The provider then shows up in the toolbar dropdown automatically.
 
 `az account show` · `az account list` · `az group list` ·
 `az resource list` · `az network vnet list` · `az network nic list` ·
-`az webapp list` · `az vm list` · `az sshkey list` · `az aks list`
+`az webapp list` · `az functionapp list` · `az vm list` · `az sshkey list` ·
+`az aks list` · `az snapshot list` · `az network bastion list` ·
+`az vmss list` · `az postgres flexible-server list` ·
+`az restore-point collection list` (per RG that has one) ·
+`az backup item list` (per Recovery Services vault)
 (all with `--output json --only-show-errors`; everything after
 `az resource list` is best-effort enrichment and only produces warnings on
 failure).
@@ -159,12 +179,20 @@ failure).
 Associations come from fields in those responses: `managedBy` on
 `az resource list` (an attached managed disk points at its VM),
 `networkSecurityGroup` on subnets and NICs, the NIC's `virtualMachine` /
-`subnet` / `publicIPAddress` references, `appServicePlanId` on
-`az webapp list`, child-resource ids (VM extensions, site slots), SSH key
-material matched between `az sshkey list` and each VM's osProfile (ARM
-copies the key text into the VM instead of referencing the key resource),
-and the `nodeResourceGroup` from `az aks list` (everything in a cluster's
-`MC_...` group belongs to it).
+`subnet` / `publicIPAddress` references, `appServicePlanId` on the webapp /
+functionapp listings, child-resource ids (VM extensions, site slots, CDN
+endpoints, email domains, DNS zone links — any `parent/child` typed
+resource whose parent is present), SSH key material matched between
+`az sshkey list` and each VM's osProfile (ARM copies the key text into the
+VM instead of referencing the key resource), the `nodeResourceGroup` from
+`az aks list` (everything in a cluster's `MC_...` group belongs to it),
+`creationData.sourceResourceId` on snapshots, the Bastion / VMSS ip
+configurations and the PostgreSQL `network.delegatedSubnetResourceId` (all
+three nest into their subnet), each VM's boot-diagnostics `storageUri`, and
+the protected items of `az backup item list` (vault → VM "backs up"
+edges). Resources with no cheap association source (container registries,
+key vaults, certificates, Front Door, plain storage accounts…) stay
+free-floating deliberately.
 
 ## Roadmap
 

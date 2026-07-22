@@ -12,7 +12,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 /// Bump whenever the cached shape changes (e.g. a new `Topology` field);
 /// files with another version are silently ignored and re-fetched.
-const VERSION: u32 = 5;
+/// 6: generic child folds, Monitoring box, new association listings.
+const VERSION: u32 = 6;
 
 #[derive(Serialize, Deserialize)]
 struct CacheFile {
