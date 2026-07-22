@@ -597,6 +597,14 @@ pub fn group_detached(topology: &mut Topology) {
             ResourceCategory::Compute,
             "Detached",
         ),
+        // Registries serve pushes/pulls from outside the topology, so they
+        // always read as detached — box them rather than scatter them.
+        (
+            "Container registry",
+            "Container registries",
+            ResourceCategory::Containers,
+            "Detached",
+        ),
     ];
     for (kind_label, plural, category, box_label) in GROUPS {
         let members: Vec<usize> = topology
