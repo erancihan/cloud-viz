@@ -1,10 +1,11 @@
 //! Deterministic layout with deliberately relaxed spacing. Containers (vnets,
 //! subnets) pack their children onto shelves (rows) aiming at a roughly square
-//! footprint and grow to fit; the top level is then placed by a compound
-//! spring embedder (`force_layout`) so resources connected by an edge cluster
-//! together while unconnected ones spread out. No RNG and a fixed iteration
-//! count, so the same topology always yields the same picture. Positions are
-//! absolute world coordinates, ready for painting.
+//! footprint and grow to fit; the top level shelf-packs the same way, in a
+//! fixed canonical order — virtual networks lead, then the other containers
+//! by size, then leaf cards grouped by category. Every sort key comes from
+//! node content (kind, category, name, id), never from listing order, so a
+//! refetch that returns the same resources shuffled yields the exact same
+//! picture. Positions are absolute world coordinates, ready for painting.
 //!
 //! No GUI types here — the module is unit-testable headlessly and shared by
 //! the egui canvas and the SVG exporter.
@@ -154,7 +155,8 @@ pub fn layout_topology(topology: &Topology) -> Layout {
     }
 
     // Stable child ordering: containers first (largest subtree first), then
-    // leaves grouped by category in fixed slot order, then by name.
+    // leaves grouped by category in fixed slot order, then by name, with the
+    // unique id as the final tiebreak so duplicate names can't reorder.
     let sort_children = |list: &mut Vec<usize>| {
         list.sort_by(|&a, &b| {
             let na = &nodes[a];
@@ -174,6 +176,7 @@ pub fn layout_topology(topology: &Topology) -> Layout {
                     }
                 })
                 .then_with(|| na.name.cmp(&nb.name))
+                .then_with(|| na.id.cmp(&nb.id))
         });
     };
 
@@ -220,17 +223,39 @@ pub fn layout_topology(topology: &Topology) -> Layout {
         }
     }
 
+    // Canonical top-level order: virtual networks lead (the network fabric on
+    // one band), then the remaining containers by descending subtree size,
+    // then leaf cards grouped by category, name, id. Content-derived keys
+    // only — listing order can never move anything.
+    roots.sort_by(|&a, &b| {
+        let (na, nb) = (&nodes[a], &nodes[b]);
+        let vnet = |n: &TopologyNode| {
+            n.kind
+                .eq_ignore_ascii_case("microsoft.network/virtualnetworks")
+        };
+        let cont = |i: usize| nodes[i].container || children_of.contains_key(nodes[i].id.as_str());
+        vnet(nb)
+            .cmp(&vnet(na))
+            .then_with(|| cont(b).cmp(&cont(a)))
+            .then_with(|| {
+                if cont(a) && cont(b) {
+                    subtree_size(b, nodes, &children_of).cmp(&subtree_size(a, nodes, &children_of))
+                } else {
+                    na.category.sort_rank().cmp(&nb.category.sort_rank())
+                }
+            })
+            .then_with(|| na.name.cmp(&nb.name))
+            .then_with(|| na.id.cmp(&nb.id))
+    });
+
     let root_boxes: Vec<Measured> = roots
         .iter()
         .map(|&r| measure(r, nodes, &children_of, &sort_children))
         .collect();
-    // Top level is placed by a spring embedder so dependencies cluster, rather
-    // than shelf-packed. Containers are still packed internally by `measure`.
-    let placed_roots: Vec<(f32, f32, Measured)> = force_layout(&root_boxes, nodes, &topology.edges)
-        .into_iter()
-        .zip(root_boxes)
-        .map(|((x, y), m)| (x, y, m))
-        .collect();
+    // The top level shelf-packs like containers do: ordered rows instead of
+    // a force-directed blob — rectangular, scannable, and immune to float
+    // summation order.
+    let (placed_roots, _, _) = shelf_pack(root_boxes, GAP);
 
     // Flatten depth-first so parents always precede their children.
     let mut placed: Vec<PlacedNode> = Vec::with_capacity(nodes.len());
@@ -315,228 +340,6 @@ fn shelf_pack(boxes: Vec<Measured>, gap: f32) -> (Vec<(f32, f32, Measured)>, f32
     (placed, max_right, y + row_h)
 }
 
-/// Deterministic compound spring embedder for the top level: root boxes whose
-/// subtrees are connected by an edge are pulled together, everything repels,
-/// and a final separation pass removes residual overlap. No RNG and a fixed
-/// iteration count, so the same topology always yields the same picture.
-/// Returns each root's top-left corner, in `roots` order.
-fn force_layout(
-    roots: &[Measured],
-    nodes: &[TopologyNode],
-    edges: &[crate::model::TopologyEdge],
-) -> Vec<(f32, f32)> {
-    let n = roots.len();
-    if n <= 1 {
-        return vec![(0.0, 0.0); n];
-    }
-    let sizes: Vec<(f32, f32)> = roots.iter().map(|m| (m.w, m.h)).collect();
-
-    // node index -> the root subtree it belongs to.
-    fn collect(m: &Measured, root: usize, out: &mut HashMap<usize, usize>) {
-        out.insert(m.node_index, root);
-        for (_, _, c) in &m.children {
-            collect(c, root, out);
-        }
-    }
-    let mut root_of: HashMap<usize, usize> = HashMap::new();
-    for (r, m) in roots.iter().enumerate() {
-        collect(m, r, &mut root_of);
-    }
-    let idx_of_id: HashMap<&str, usize> = nodes
-        .iter()
-        .enumerate()
-        .map(|(i, node)| (node.id.as_str(), i))
-        .collect();
-
-    // Lift each edge to the two roots that contain its endpoints.
-    let mut springs: Vec<(usize, usize)> = Vec::new();
-    for e in edges {
-        let (Some(&si), Some(&ti)) = (
-            idx_of_id.get(e.source.as_str()),
-            idx_of_id.get(e.target.as_str()),
-        ) else {
-            continue;
-        };
-        if let (Some(&ra), Some(&rb)) = (root_of.get(&si), root_of.get(&ti)) {
-            if ra != rb {
-                springs.push((ra, rb));
-            }
-        }
-    }
-
-    // Ideal separation scales with box size so linked boxes settle adjacent.
-    let avg_diag = sizes
-        .iter()
-        .map(|(w, h)| (w * w + h * h).sqrt())
-        .sum::<f32>()
-        / n as f32;
-    let k = avg_diag * 0.6 + GAP;
-    // Central gravity keeps otherwise-unconnected nodes from drifting away;
-    // the clamp is a hard safety bound so the picture can never explode.
-    let gravity = 0.7;
-    let bound = (n as f32).sqrt() * (avg_diag + k) * 1.5;
-
-    // Deterministic grid seed, walked in id order and centered on the origin.
-    let mut order: Vec<usize> = (0..n).collect();
-    order.sort_by(|&a, &b| {
-        nodes[roots[a].node_index]
-            .id
-            .cmp(&nodes[roots[b].node_index].id)
-    });
-    let cols = (n as f32).sqrt().ceil().max(1.0) as usize;
-    let rows = n.div_ceil(cols);
-    let cell = avg_diag + k;
-    let mut pos = vec![(0.0f32, 0.0f32); n];
-    let (cx0, cy0) = (
-        (cols as f32 - 1.0) * cell / 2.0,
-        (rows as f32 - 1.0) * cell / 2.0,
-    );
-    for (rank, &i) in order.iter().enumerate() {
-        pos[i] = (
-            (rank % cols) as f32 * cell - cx0,
-            (rank / cols) as f32 * cell - cy0,
-        );
-    }
-
-    // Horizontal alignment (fCoSE-style constraint): every virtual network
-    // shares one horizontal line. Constraining only y — projected each step so
-    // the whole system settles *with* the constraint — keeps each vnet near
-    // its connected cards (short edges) while x stays force-driven.
-    let vnets: Vec<usize> = (0..n)
-        .filter(|&i| nodes[roots[i].node_index].kind == "Microsoft.Network/virtualNetworks")
-        .collect();
-    let align = vnets.len() >= 2;
-
-    let iters = 500;
-    let temp0 = k * 1.2;
-    for it in 0..iters {
-        let temp = temp0 * (1.0 - it as f32 / iters as f32).max(0.02);
-        let mut disp = vec![(0.0f32, 0.0f32); n];
-        // Repulsion between every pair.
-        for i in 0..n {
-            for j in (i + 1)..n {
-                let mut dx = pos[i].0 - pos[j].0;
-                let mut dy = pos[i].1 - pos[j].1;
-                let mut d2 = dx * dx + dy * dy;
-                if d2 < 1e-4 {
-                    // Deterministic nudge apart for coincident centers.
-                    dx = (i as f32 - j as f32) * 0.01 + 0.01;
-                    dy = ((i * 7 + j) % 13) as f32 * 0.01 + 0.01;
-                    d2 = dx * dx + dy * dy;
-                }
-                let d = d2.sqrt();
-                let f = k * k / d;
-                let (ux, uy) = (dx / d, dy / d);
-                disp[i].0 += ux * f;
-                disp[i].1 += uy * f;
-                disp[j].0 -= ux * f;
-                disp[j].1 -= uy * f;
-            }
-        }
-        // Attraction along lifted edges.
-        for &(a, b) in &springs {
-            let dx = pos[a].0 - pos[b].0;
-            let dy = pos[a].1 - pos[b].1;
-            let d = (dx * dx + dy * dy).sqrt().max(1e-3);
-            let f = d * d / k;
-            let (ux, uy) = (dx / d, dy / d);
-            disp[a].0 -= ux * f;
-            disp[a].1 -= uy * f;
-            disp[b].0 += ux * f;
-            disp[b].1 += uy * f;
-        }
-        // Central gravity, pulling everything toward the origin.
-        for i in 0..n {
-            disp[i].0 -= pos[i].0 * gravity;
-            disp[i].1 -= pos[i].1 * gravity;
-        }
-        // Integrate, capping the per-step move by the cooling temperature, and
-        // clamp within the safety bound.
-        for i in 0..n {
-            let (dx, dy) = disp[i];
-            let d = (dx * dx + dy * dy).sqrt();
-            if d > 1e-6 {
-                let step = d.min(temp);
-                pos[i].0 = (pos[i].0 + dx / d * step).clamp(-bound, bound);
-                pos[i].1 = (pos[i].1 + dy / d * step).clamp(-bound, bound);
-            }
-        }
-        // Project every vnet onto their shared horizontal line (mean y).
-        if align {
-            let mean_y = vnets.iter().map(|&i| pos[i].1).sum::<f32>() / vnets.len() as f32;
-            for &i in &vnets {
-                pos[i].1 = mean_y;
-            }
-        }
-    }
-
-    let fixed: HashSet<usize> = if align {
-        vnets.iter().copied().collect()
-    } else {
-        HashSet::new()
-    };
-    separate(&mut pos, &sizes, GAP, &fixed);
-
-    pos.iter()
-        .zip(&sizes)
-        .map(|(&(cx, cy), &(w, h))| (cx - w / 2.0, cy - h / 2.0))
-        .collect()
-}
-
-/// Push overlapping boxes apart (centers in `pos`, sizes in `sizes`) until each
-/// pair clears `gap` on at least one axis. `fixed` holds the aligned virtual
-/// networks: two of them only ever separate horizontally (staying on their
-/// shared line), and a fixed/free collision is absorbed entirely by the free
-/// box, so the vnets never leave the line. Deterministic; converges in budget.
-fn separate(pos: &mut [(f32, f32)], sizes: &[(f32, f32)], gap: f32, fixed: &HashSet<usize>) {
-    let n = pos.len();
-    for _ in 0..600 {
-        let mut moved = false;
-        for i in 0..n {
-            for j in (i + 1)..n {
-                let (wi, hi) = sizes[i];
-                let (wj, hj) = sizes[j];
-                let dx = pos[j].0 - pos[i].0;
-                let dy = pos[j].1 - pos[i].1;
-                let ox = (wi + wj) / 2.0 + gap - dx.abs();
-                let oy = (hi + hj) / 2.0 + gap - dy.abs();
-                if ox <= 0.0 || oy <= 0.0 {
-                    continue;
-                }
-                let (fi, fj) = (fixed.contains(&i), fixed.contains(&j));
-                if fi && fj {
-                    // Two aligned vnets: shove apart in x only, keep the line.
-                    let dir = if dx >= 0.0 { 1.0 } else { -1.0 };
-                    pos[i].0 -= ox / 2.0 * dir;
-                    pos[j].0 += ox / 2.0 * dir;
-                } else {
-                    // Split the correction, unless one side is pinned.
-                    let (si, sj) = if fi {
-                        (0.0, 1.0)
-                    } else if fj {
-                        (1.0, 0.0)
-                    } else {
-                        (0.5, 0.5)
-                    };
-                    if ox <= oy {
-                        let dir = if dx >= 0.0 { 1.0 } else { -1.0 };
-                        pos[i].0 -= ox * si * dir;
-                        pos[j].0 += ox * sj * dir;
-                    } else {
-                        let dir = if dy >= 0.0 { 1.0 } else { -1.0 };
-                        pos[i].1 -= oy * si * dir;
-                        pos[j].1 += oy * sj * dir;
-                    }
-                }
-                moved = true;
-            }
-        }
-        if !moved {
-            break;
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -611,93 +414,44 @@ mod tests {
         }
     }
 
-    fn tnode(id: &str, kind: &str, parent: Option<&str>, container: bool) -> TopologyNode {
-        TopologyNode {
-            id: id.into(),
-            name: id.into(),
-            kind: kind.into(),
-            kind_label: kind.into(),
-            category: crate::model::ResourceCategory::Network,
-            parent_id: parent.map(str::to_string),
-            container,
-            group: None,
-            attachments: Vec::new(),
-            cost: None,
-            region: None,
-            metadata: Vec::new(),
+    #[test]
+    fn layout_is_stable_under_input_reordering() {
+        // The user-visible guarantee of the shelf layout: `az` returning the
+        // same resources in a different order must not move a single node.
+        let topo = demo_topology();
+        let mut shuffled = topo.clone();
+        shuffled.nodes.reverse();
+        shuffled.edges.reverse();
+        let (a, b) = (layout_topology(&topo), layout_topology(&shuffled));
+        for p in &a.placed {
+            let id = &topo.nodes[p.index].id;
+            let q = &b.placed[b.by_id[id]];
+            assert_eq!(p.rect, q.rect, "{id} moved after input reorder");
         }
     }
 
     #[test]
-    fn connected_cards_cluster_near_their_vnet_despite_alignment() {
-        // Regression for long edges: with the vnet-alignment constraint on,
-        // a card connected to a resource *inside* a vnet must still settle
-        // near that vnet, not get stranded across the diagram.
-        use crate::model::{EdgeKind, Topology, TopologyEdge};
-        const VNET: &str = "Microsoft.Network/virtualNetworks";
-        let mut nodes = vec![
-            tnode("vnet-a", VNET, None, true),
-            tnode("snet-a", "sub", Some("vnet-a"), true),
-            tnode("res-a", "res", Some("snet-a"), false),
-            tnode("vnet-b", VNET, None, true),
-            tnode("snet-b", "sub", Some("vnet-b"), true),
-            tnode("res-b", "res", Some("snet-b"), false),
-        ];
-        let mut edges = Vec::new();
-        for (side, res) in [("a", "res-a"), ("b", "res-b")] {
-            for i in 0..10 {
-                let id = format!("ext-{side}-{i}");
-                nodes.push(tnode(&id, "res", None, false));
-                edges.push(TopologyEdge {
-                    id: format!("e-{side}-{i}"),
-                    source: id,
-                    target: res.into(),
-                    kind: EdgeKind::Association,
-                    label: None,
-                });
-            }
-        }
-        let topo = Topology {
-            provider: "t".into(),
-            scope_id: "t".into(),
-            scope_label: "t".into(),
-            nodes,
-            edges,
-            currency: None,
-            warnings: Vec::new(),
-        };
-        let layout = layout_topology(&topo);
-        let center = |id: &str| {
-            let p = &layout.placed[layout.by_id[id]];
-            (p.rect.x + p.rect.w / 2.0, p.rect.y + p.rect.h / 2.0)
-        };
-        let dist =
-            |a: (f32, f32), b: (f32, f32)| ((a.0 - b.0).powi(2) + (a.1 - b.1).powi(2)).sqrt();
-        let (ca, cb) = (center("vnet-a"), center("vnet-b"));
-        for i in 0..10 {
-            let ea = center(&format!("ext-a-{i}"));
-            assert!(dist(ea, ca) < dist(ea, cb), "ext-a-{i} drifted to vnet-b");
-            let eb = center(&format!("ext-b-{i}"));
-            assert!(dist(eb, cb) < dist(eb, ca), "ext-b-{i} drifted to vnet-a");
-        }
-        assert!((ca.1 - cb.1).abs() < 0.5, "vnets not aligned");
-    }
-
-    #[test]
-    fn virtual_networks_are_horizontally_aligned() {
+    fn virtual_networks_lead_on_a_shared_top_row() {
+        // Vnets sort first at the top level, so they share the first shelf:
+        // same top edge, leftmost band of the diagram.
         let topo = demo_topology();
         let layout = layout_topology(&topo);
-        let centers: Vec<f32> = layout
+        let vnets: Vec<&PlacedNode> = layout
             .placed
             .iter()
             .filter(|p| topo.nodes[p.index].kind == "Microsoft.Network/virtualNetworks")
-            .map(|p| p.rect.y + p.rect.h / 2.0)
             .collect();
-        assert!(centers.len() >= 2, "demo should have multiple vnets");
-        for c in &centers {
+        assert!(vnets.len() >= 2, "demo should have multiple vnets");
+        let min_y = layout
+            .placed
+            .iter()
+            .map(|p| p.rect.y)
+            .fold(f32::INFINITY, f32::min);
+        for v in &vnets {
             assert!(
-                (c - centers[0]).abs() < 0.5,
-                "vnets not aligned on a common line: {centers:?}"
+                (v.rect.y - min_y).abs() < 0.001,
+                "{} not on the top shelf",
+                topo.nodes[v.index].name
             );
         }
     }

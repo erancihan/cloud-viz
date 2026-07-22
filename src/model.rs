@@ -564,38 +564,46 @@ pub fn format_cost(amount: f64, currency: Option<&str>) -> String {
 /// that are never topologically connected (network watchers, VM restore
 /// point collections).
 pub fn group_detached(topology: &mut Topology) {
-    // (member kind_label, box name, category, box header label). "Detached"
-    // reads as orphaned/cleanup-candidate; regional services get "Regional".
-    const GROUPS: &[(&str, &str, ResourceCategory, &str)] = &[
+    // (member kind_label, box name, category, box header label, edgeless
+    // only). "Detached" reads as orphaned/cleanup-candidate; regional
+    // services get "Regional". `edgeless only` boxes a kind only when a node
+    // has no edges at all — an NSG protecting something stays free next to
+    // what it protects, an unreferenced one is genuinely lying around.
+    const GROUPS: &[(&str, &str, ResourceCategory, &str, bool)] = &[
         (
             "SSH public key",
             "SSH public keys",
             ResourceCategory::Security,
             "Detached",
+            false,
         ),
         (
             "Managed disk",
             "Managed disks",
             ResourceCategory::Compute,
             "Detached",
+            false,
         ),
         (
             "Public IP address",
             "Public IP addresses",
             ResourceCategory::Network,
             "Detached",
+            false,
         ),
         (
             "Network Watcher",
             "Network Watchers",
             ResourceCategory::Network,
             "Regional",
+            false,
         ),
         (
             "Restore point collection",
             "Restore point collections",
             ResourceCategory::Compute,
             "Detached",
+            false,
         ),
         // Registries serve pushes/pulls from outside the topology, so they
         // always read as detached — box them rather than scatter them.
@@ -604,14 +612,42 @@ pub fn group_detached(topology: &mut Topology) {
             "Container registries",
             ResourceCategory::Containers,
             "Detached",
+            false,
+        ),
+        (
+            "Network security group",
+            "Network security groups",
+            ResourceCategory::Network,
+            "Detached",
+            true,
+        ),
+        // Container instances with no visible wiring (no subnet, no edges)
+        // read as detached workloads; ones that gain associations stay free.
+        (
+            "Container instances",
+            "Container instances",
+            ResourceCategory::Containers,
+            "Detached",
+            true,
         ),
     ];
-    for (kind_label, plural, category, box_label) in GROUPS {
+    let mut connected: HashSet<&str> = HashSet::new();
+    for edge in &topology.edges {
+        connected.insert(edge.source.as_str());
+        connected.insert(edge.target.as_str());
+    }
+    let connected: HashSet<String> = connected.into_iter().map(String::from).collect();
+    for (kind_label, plural, category, box_label, edgeless_only) in GROUPS {
         let members: Vec<usize> = topology
             .nodes
             .iter()
             .enumerate()
-            .filter(|(_, n)| n.parent_id.is_none() && !n.container && n.kind_label == *kind_label)
+            .filter(|(_, n)| {
+                n.parent_id.is_none()
+                    && !n.container
+                    && n.kind_label == *kind_label
+                    && (!edgeless_only || !connected.contains(&n.id))
+            })
             .map(|(i, _)| i)
             .collect();
         let id = format!(
@@ -1075,6 +1111,34 @@ mod tests {
         let mut n = leaf(name, kind_label);
         n.id = format!("/subscriptions/s/{name}");
         n
+    }
+
+    #[test]
+    fn edgeless_only_kinds_box_only_unwired_nodes() {
+        let mut t = t_with(
+            vec![
+                leaf("nsg-wired", "Network security group"),
+                leaf("nsg-stale", "Network security group"),
+                leaf("vm-a", "Virtual machine"),
+                leaf("aci-idle", "Container instances"),
+            ],
+            vec![("test:nsg-wired", "test:vm-a", "protects")],
+        );
+        group_detached(&mut t);
+        let by_name = |name: &str| t.nodes.iter().find(|n| n.name == name).unwrap();
+        // The NSG protecting something stays free next to what it protects…
+        assert_eq!(by_name("nsg-wired").parent_id, None);
+        // …only the unreferenced one is boxed, along with the idle ACI.
+        let nsg_box = by_name("Network security groups");
+        assert_eq!(
+            by_name("nsg-stale").parent_id.as_deref(),
+            Some(nsg_box.id.as_str())
+        );
+        let aci_box = by_name("Container instances");
+        assert_eq!(
+            by_name("aci-idle").parent_id.as_deref(),
+            Some(aci_box.id.as_str())
+        );
     }
 
     #[test]
