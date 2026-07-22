@@ -276,6 +276,7 @@ pub fn build_topology(inv: AzureInventory) -> Topology {
                 folded.entry(owner.clone()).or_default().push(Attachment {
                     kind: "public ip".into(),
                     name: resource.name.clone(),
+                    id: Some(id.clone()),
                     shared: anchors.len() > 1,
                     cost: cost_of(&id),
                 });
@@ -321,6 +322,7 @@ pub fn build_topology(inv: AzureInventory) -> Topology {
             folded.entry(owner).or_default().push(Attachment {
                 kind: kind.to_string(),
                 name: name.to_string(),
+                id: Some(id.clone()),
                 shared: false,
                 cost: cost_of(&id),
             });
@@ -371,6 +373,7 @@ pub fn build_topology(inv: AzureInventory) -> Topology {
             folded.entry(vm_id.clone()).or_default().push(Attachment {
                 kind: "ssh key".into(),
                 name: ssh_key.name.clone(),
+                id: Some(key_id.clone()),
                 shared: users.len() > 1,
                 cost: cost_of(&key_id),
             });
@@ -873,6 +876,10 @@ mod tests {
             vec![Attachment {
                 kind: "slot".into(),
                 name: "staging".into(),
+                id: Some(
+                    "/subscriptions/00000000-0000-0000-0000-000000000001/resourcegroups/rg-app/providers/microsoft.web/sites/app-portal/slots/staging"
+                        .into()
+                ),
                 shared: false,
                 cost: None,
             }]
@@ -954,6 +961,44 @@ mod tests {
         // No cost row → no badge, not zero.
         assert_eq!(find(&t, "vm-web-02").cost, None);
         assert_eq!(find(&t, "vm-web-02").total_cost(), None);
+    }
+
+    #[test]
+    fn attachments_carry_ids_and_yield_ordered_delete_plans() {
+        let t = build();
+        let vm = find(&t, "vm-web-01");
+        let att = |kind: &str| vm.attachments.iter().find(|a| a.kind == kind).unwrap();
+        assert!(att("disk")
+            .id
+            .as_deref()
+            .unwrap()
+            .ends_with("/disks/datadisk_1"));
+        assert!(att("public ip")
+            .id
+            .as_deref()
+            .unwrap()
+            .ends_with("/publicipaddresses/pip-web"));
+        assert!(att("nic")
+            .id
+            .as_deref()
+            .unwrap()
+            .ends_with("/networkinterfaces/nic-web-01"));
+
+        let plan = crate::model::delete_plan(vm).expect("a VM gets a delete plan");
+        let pos = |label: &str| {
+            plan.steps
+                .iter()
+                .position(|s| s.label.contains(label))
+                .unwrap_or_else(|| panic!("no step for {label}"))
+        };
+        // Backup first; the VM frees its NIC and disk; the NIC frees its IP.
+        assert!(pos("rpc-vm-web-01") < pos("Virtual machine vm-web-01"));
+        assert!(pos("Virtual machine vm-web-01") < pos("nic-web-01"));
+        assert!(pos("nic-web-01") < pos("pip-web"));
+        assert!(pos("pip-web") < pos("DataDisk_1"));
+        // The shared admin key is never a step, only a note.
+        assert!(!plan.steps.iter().any(|s| s.label.contains("key-admin")));
+        assert!(plan.notes.iter().any(|n| n.contains("key-admin")));
     }
 
     #[test]

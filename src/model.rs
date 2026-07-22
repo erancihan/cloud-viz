@@ -122,6 +122,11 @@ pub struct Attachment {
     /// "extension", "slot", "ssh key".
     pub kind: String,
     pub name: String,
+    /// The folded resource's own id (for Azure the lowercased ARM id) —
+    /// what a delete command must target. `None` when the provider didn't
+    /// record one (older caches, purely synthetic attachments).
+    #[serde(default)]
+    pub id: Option<String>,
     /// True when the same underlying resource is folded into other nodes as
     /// well (e.g. an SSH key used by several VMs) — rendered with a link
     /// badge on the sub-card's corner.
@@ -143,6 +148,103 @@ impl Attachment {
             "ssh key" | "public ip" | "restore point"
         )
     }
+}
+
+/// One step of a [`DeletePlan`]: a CLI command plus what it removes.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DeleteStep {
+    /// Human label, e.g. `public ip pip-web` or `Virtual machine vm-web-01`.
+    pub label: String,
+    /// The command to run, e.g. `az resource delete --ids "…"`.
+    pub command: String,
+}
+
+/// Ordered teardown of a node and everything folded into its card, shown in
+/// the details panel's Delete section.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DeletePlan {
+    /// Commands in dependency order — run top to bottom.
+    pub steps: Vec<DeleteStep>,
+    /// What is deliberately *not* a step and why: shared resources left in
+    /// place, child resources that die with their parent, missing ids.
+    pub notes: Vec<String>,
+}
+
+/// Position of an attachment kind in the teardown order; `None` for child
+/// resources (extensions, slots) that are deleted together with their parent
+/// and must not get their own command.
+fn delete_rank(kind: &str) -> Option<u8> {
+    match kind {
+        // Backups referencing the resource go first, so nothing dangles.
+        "restore point" => Some(0),
+        // 1 is the resource itself: its deletion detaches NICs and disks.
+        "nic" => Some(2),
+        // A public IP can only be deleted once the NIC holding it is gone.
+        "public ip" => Some(3),
+        "disk" => Some(4),
+        // Independent credential resources — pure cleanup, last.
+        "ssh key" => Some(5),
+        _ => None,
+    }
+}
+
+/// Builds the ordered CLI teardown for a node and its folded attachments:
+/// dependents before dependencies (restore points, then the resource — which
+/// frees its NICs and disks — then NICs, then the public IPs those NICs held,
+/// then disks, then SSH keys), so running the steps top to bottom leaves
+/// nothing behind. Shared attachments are never deleted, only noted. Commands
+/// are Azure CLI-shaped (the demo estate mimics Azure); when another provider
+/// lands, branch on [`Topology::provider`] here. `None` for containers and
+/// synthetic nodes — they have nothing directly deletable.
+pub fn delete_plan(node: &TopologyNode) -> Option<DeletePlan> {
+    if node.container || !node.id.contains("/subscriptions/") {
+        return None;
+    }
+    let cmd = |id: &str| format!("az resource delete --ids \"{id}\"");
+    let mut ranked = vec![(
+        1u8,
+        DeleteStep {
+            label: format!("{} {}", node.kind_label, node.name),
+            command: cmd(&node.id),
+        },
+    )];
+    let mut notes = Vec::new();
+    for att in &node.attachments {
+        if att.shared {
+            notes.push(format!(
+                "{} {} is shared with other resources — left in place",
+                att.kind, att.name
+            ));
+            continue;
+        }
+        let Some(rank) = delete_rank(&att.kind) else {
+            notes.push(format!(
+                "{} {} is a child resource — deleted together with {}",
+                att.kind, att.name, node.name
+            ));
+            continue;
+        };
+        let Some(id) = att.id.as_deref() else {
+            notes.push(format!(
+                "{} {} has no recorded resource id — press ⟳ Refresh, or delete it manually",
+                att.kind, att.name
+            ));
+            continue;
+        };
+        ranked.push((
+            rank,
+            DeleteStep {
+                label: format!("{} {}", att.kind, att.name),
+                command: cmd(id),
+            },
+        ));
+    }
+    // Stable sort: attachments of the same kind keep their card order.
+    ranked.sort_by_key(|(rank, _)| *rank);
+    Some(DeletePlan {
+        steps: ranked.into_iter().map(|(_, step)| step).collect(),
+        notes,
+    })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -482,12 +584,14 @@ mod tests {
             Attachment {
                 kind: "disk".into(),
                 name: "data".into(),
+                id: None,
                 shared: false,
                 cost: Some(3.25),
             },
             Attachment {
                 kind: "nic".into(),
                 name: "nic-a".into(),
+                id: None,
                 shared: false,
                 cost: None,
             },
@@ -497,6 +601,85 @@ mod tests {
         // …and adds onto the owner's own cost when both are known.
         vm.cost = Some(40.0);
         assert_eq!(vm.total_cost(), Some(43.25));
+    }
+
+    #[test]
+    fn delete_plan_orders_dependents_before_dependencies() {
+        let att = |kind: &str, name: &str, shared: bool, id: Option<&str>| Attachment {
+            kind: kind.into(),
+            name: name.into(),
+            id: id.map(String::from),
+            shared,
+            cost: None,
+        };
+        let mut vm = leaf("vm-a", "Virtual machine");
+        vm.id = "/subscriptions/s/resourcegroups/rg/vm-a".into();
+        // Deliberately shuffled: the plan must impose the safe order itself.
+        vm.attachments = vec![
+            att(
+                "ssh key",
+                "key-solo",
+                false,
+                Some("/subscriptions/s/key-solo"),
+            ),
+            att("disk", "disk-a", false, Some("/subscriptions/s/disk-a")),
+            att("extension", "AADLogin", false, Some("/subscriptions/s/ext")),
+            att("public ip", "pip-a", false, Some("/subscriptions/s/pip-a")),
+            att(
+                "ssh key",
+                "key-shared",
+                true,
+                Some("/subscriptions/s/key-shared"),
+            ),
+            att("nic", "nic-a", false, Some("/subscriptions/s/nic-a")),
+            att(
+                "restore point",
+                "rpc-a",
+                false,
+                Some("/subscriptions/s/rpc-a"),
+            ),
+            att("disk", "disk-no-id", false, None),
+        ];
+
+        let plan = delete_plan(&vm).expect("a leaf resource gets a plan");
+        let labels: Vec<&str> = plan.steps.iter().map(|s| s.label.as_str()).collect();
+        assert_eq!(
+            labels,
+            vec![
+                "restore point rpc-a",
+                "Virtual machine vm-a",
+                "nic nic-a",
+                "public ip pip-a",
+                "disk disk-a",
+                "ssh key key-solo",
+            ]
+        );
+        assert_eq!(
+            plan.steps[1].command,
+            "az resource delete --ids \"/subscriptions/s/resourcegroups/rg/vm-a\""
+        );
+        assert_eq!(
+            plan.steps[3].command,
+            "az resource delete --ids \"/subscriptions/s/pip-a\""
+        );
+        // Shared key kept, extension dies with the VM, id-less disk flagged.
+        assert_eq!(plan.notes.len(), 3);
+        assert!(plan
+            .notes
+            .iter()
+            .any(|n| n.contains("key-shared") && n.contains("left in place")));
+        assert!(plan
+            .notes
+            .iter()
+            .any(|n| n.contains("AADLogin") && n.contains("child resource")));
+        assert!(plan.notes.iter().any(|n| n.contains("disk-no-id")));
+
+        // Containers and synthetic nodes have no plan.
+        let mut boxed = leaf("Managed disks", "Detached");
+        boxed.container = true;
+        boxed.id = "/subscriptions/s/whatever".into();
+        assert_eq!(delete_plan(&boxed), None);
+        assert_eq!(delete_plan(&leaf("group", "Group")), None); // id "test:group"
     }
 
     #[test]

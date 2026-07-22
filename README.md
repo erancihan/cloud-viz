@@ -71,6 +71,14 @@ cargo run -- --export-svg topo.svg --provider azure      # your live estate
   revisiting a month is instant. Needs the Cost Management Reader role —
   without it the cards simply render without badges (a warning explains
   why).
+- Details panel has a collapsed **Delete** section: the `az` commands that
+  remove the resource *and* everything folded into its card, in dependency
+  order (restore points, then the resource — freeing its NICs and disks —
+  then NICs, then the public IPs those NICs held, then disks, then SSH keys)
+  so nothing is left behind. Shared attachments are never included, child
+  resources (extensions, slots) are noted as dying with their parent, and a
+  copy button grabs the whole script. CloudViz itself never runs them —
+  read-only stays read-only.
 - Pan (drag), zoom (scroll, cursor-anchored; +/- buttons by the minimap,
   center-anchored), fit-to-view, clickable minimap, light/dark themes,
   fullscreen (F11), details panel per resource. The screen zoom (Ctrl +/-)

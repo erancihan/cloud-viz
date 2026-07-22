@@ -508,7 +508,7 @@ impl CloudVizApp {
 
                     // Collapsible sections (IntelliJ-style accordion), cost
                     // breakdown at the bottom.
-                    section(ui, &theme, "Overview", |ui| {
+                    section(ui, &theme, "Overview", true, |ui| {
                         if let Some(group) = &node.group {
                             detail_row(ui, &theme, "Resource group", group, false);
                         }
@@ -524,7 +524,7 @@ impl CloudVizApp {
                     // costs live in the Cost section below.
                     if !node.attachments.is_empty() {
                         let title = format!("Attached resources ({})", node.attachments.len());
-                        section(ui, &theme, &title, |ui| {
+                        section(ui, &theme, &title, true, |ui| {
                             let mut kinds: Vec<&str> = Vec::new();
                             for att in &node.attachments {
                                 if !kinds.contains(&att.kind.as_str()) {
@@ -556,7 +556,7 @@ impl CloudVizApp {
                     }
 
                     if !node.metadata.is_empty() {
-                        section(ui, &theme, "Metadata", |ui| {
+                        section(ui, &theme, "Metadata", true, |ui| {
                             for (key, value) in &node.metadata {
                                 detail_row(ui, &theme, key, value, false);
                             }
@@ -569,7 +569,7 @@ impl CloudVizApp {
                     if let Some(total) = node.total_cost() {
                         let currency = currency.as_deref();
                         let title = format!("Cost · {}", self.cost_period.label());
-                        section(ui, &theme, &title, |ui| {
+                        section(ui, &theme, &title, true, |ui| {
                             ui.add_space(4.0);
                             let costed: Vec<&Attachment> = node
                                 .attachments
@@ -599,6 +599,58 @@ impl CloudVizApp {
                                 ui.separator();
                             }
                             cost_row(ui, &theme, "Total", &format_cost(total, currency), true);
+                            ui.add_space(4.0);
+                        });
+                    }
+
+                    // Teardown commands: the resource and everything folded
+                    // into its card, dependency-ordered so nothing is left
+                    // behind. Collapsed by default — it's the dangerous one.
+                    if let Some(plan) = delete_plan(&node) {
+                        section(ui, &theme, "Delete", false, |ui| {
+                            ui.add_space(4.0);
+                            ui.add(
+                                egui::Label::new(
+                                    RichText::new(
+                                        "Irreversible. Run top to bottom — the order \
+                                         frees dependents first (a VM releases its NIC, \
+                                         the NIC its public IP) so nothing is left behind.",
+                                    )
+                                    .size(11.0)
+                                    .color(c32(theme.warn)),
+                                )
+                                .wrap(),
+                            );
+                            ui.add_space(6.0);
+                            let script: String = plan
+                                .steps
+                                .iter()
+                                .enumerate()
+                                .map(|(i, s)| format!("# {}. {}\n{}\n", i + 1, s.label, s.command))
+                                .collect();
+                            if ui.button("⧉  Copy commands").clicked() {
+                                ui.ctx().copy_text(script.clone());
+                            }
+                            ui.add_space(6.0);
+                            ui.add(
+                                egui::Label::new(
+                                    RichText::new(script.trim_end())
+                                        .font(FontId::monospace(10.0))
+                                        .color(c32(theme.ink_2)),
+                                )
+                                .wrap(),
+                            );
+                            for note in &plan.notes {
+                                ui.add_space(4.0);
+                                ui.add(
+                                    egui::Label::new(
+                                        RichText::new(format!("• {note}"))
+                                            .size(10.5)
+                                            .color(c32(theme.ink_3)),
+                                    )
+                                    .wrap(),
+                                );
+                            }
                             ui.add_space(4.0);
                         });
                     }
@@ -766,14 +818,14 @@ impl eframe::App for CloudVizApp {
 
 /// One collapsible details-panel section — an uppercase header with a
 /// disclosure triangle (accordion). Open state persists for the session.
-fn section(ui: &mut Ui, theme: &Theme, title: &str, add: impl FnOnce(&mut Ui)) {
+fn section(ui: &mut Ui, theme: &Theme, title: &str, default_open: bool, add: impl FnOnce(&mut Ui)) {
     egui::CollapsingHeader::new(
         RichText::new(title.to_uppercase())
             .size(10.5)
             .strong()
             .color(c32(theme.ink_3)),
     )
-    .default_open(true)
+    .default_open(default_open)
     .show(ui, |ui| {
         ui.add_space(2.0);
         add(ui);
