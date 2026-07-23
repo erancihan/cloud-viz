@@ -173,6 +173,10 @@ impl super::CloudProvider for AzureProvider {
             &with_scope(&["postgres", "flexible-server", "list"], &scope_args),
             &mut warnings,
         );
+        let private_endpoints: Vec<AzPrivateEndpoint> = self.try_list(
+            &with_scope(&["network", "private-endpoint", "list"], &scope_args),
+            &mut warnings,
+        );
 
         // Backup items only list per vault, so query each Recovery Services
         // vault (usually a handful) like the restore-point per-RG loop.
@@ -218,6 +222,7 @@ impl super::CloudProvider for AzureProvider {
             bastions,
             vmss,
             postgres,
+            private_endpoints,
             backup_items,
             costs,
             warnings,

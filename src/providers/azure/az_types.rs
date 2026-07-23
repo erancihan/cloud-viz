@@ -273,6 +273,33 @@ impl AzVmss {
     }
 }
 
+/// One entry of `az network private-endpoint list` — the private-link
+/// service connection names the resource the endpoint fronts.
+#[derive(Debug, Clone, Deserialize)]
+pub struct AzPrivateEndpoint {
+    pub id: String,
+    #[serde(default, rename = "privateLinkServiceConnections")]
+    pub connections: Vec<AzPeConnection>,
+    #[serde(default, rename = "manualPrivateLinkServiceConnections")]
+    pub manual_connections: Vec<AzPeConnection>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct AzPeConnection {
+    #[serde(default, rename = "privateLinkServiceId")]
+    pub private_link_service_id: Option<String>,
+}
+
+impl AzPrivateEndpoint {
+    /// The fronted resource's ARM id (first connection, auto or manual).
+    pub fn target_id(&self) -> Option<&str> {
+        self.connections
+            .iter()
+            .chain(self.manual_connections.iter())
+            .find_map(|c| c.private_link_service_id.as_deref())
+    }
+}
+
 /// One entry of `az postgres flexible-server list` — vnet-integrated servers
 /// carry the delegated subnet they live in.
 #[derive(Debug, Clone, Deserialize)]

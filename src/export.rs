@@ -339,9 +339,11 @@ pub fn to_svg(topology: &Topology, theme: &Theme) -> String {
                 // network green, SSH key = security red); hardware stays
                 // muted.
                 let icon_color = match att.kind.as_str() {
-                    "public ip" => theme.category_color(ResourceCategory::Network),
+                    "public ip" | "private endpoint" => {
+                        theme.category_color(ResourceCategory::Network)
+                    }
                     "ssh key" | "nsg" => theme.category_color(ResourceCategory::Security),
-                    "restore point" => theme.category_color(ResourceCategory::Compute),
+                    "restore point" | "snapshot" => theme.category_color(ResourceCategory::Compute),
                     _ => theme.ink_3,
                 };
                 // 16-grid glyph scaled to 11px, centered on (x=27, cy).
@@ -440,6 +442,16 @@ fn attachment_glyph_svg(kind: &str, color: Rgb) -> String {
             r#"<path d="M7.2 8h6.2M10.8 8v2.6M13.4 8v2.6"/>"#
         )
         .to_string(),
+        "snapshot" => concat!(
+            r#"<rect x="2.5" y="5" width="11" height="8" rx="1"/>"#,
+            r#"<circle cx="8" cy="9" r="2.4"/>"#,
+            r#"<path d="M6 5l1-1.6h2L10 5"/>"#
+        )
+        .to_string(),
+        "private endpoint" => format!(
+            r#"<circle cx="3.5" cy="8" r="1.6" fill="{}" stroke="none"/><path d="M5.1 8h4.2"/><circle cx="11.6" cy="8" r="2.3"/>"#,
+            color.hex()
+        ),
         "nsg" => {
             r#"<path d="M8 2.6 13 4.6 12.4 9.4 8 13.4 3.6 9.4 3 4.6Z"/>"#.to_string()
         }

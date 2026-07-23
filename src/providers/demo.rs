@@ -471,16 +471,9 @@ pub fn demo_topology() -> Topology {
             Containers,
             vec![],
         ),
-        // A snapshot of the decommissioned disk and the vault backing up a
-        // VM — the association edges the new listings produce.
-        leaf(
-            "rg-app",
-            "snap-decom",
-            "Microsoft.Compute/snapshots",
-            "Snapshot",
-            Compute,
-            vec![],
-        ),
+        // The vault backing up a VM — its "backs up" edge keeps it free.
+        // (snap-decom and pep-blob fold onto cards below, like the Azure
+        // mapper folds snapshots and private endpoints.)
         leaf(
             "rg-ops",
             "rsv-backup",
@@ -557,6 +550,13 @@ pub fn demo_topology() -> Topology {
     attach("vm-jump", &[("nic", "nic-jump", false, None)]);
     // The load balancer's frontend IP folds in like a VM's public IP would.
     attach("lb-web", &[("public ip", "pip-gateway", false, Some(2.92))]);
+    // A snapshot rides on its source disk's card; a private endpoint on the
+    // card of the service it fronts.
+    attach("disk-decom", &[("snapshot", "snap-decom", false, None)]);
+    attach(
+        "stcontosoprod",
+        &[("private endpoint", "pep-blob", false, None)],
+    );
 
     // Month-to-date costs, as the Azure mapper fills from the Cost Management
     // query. Some cards stay cost-free (NSGs, SSH keys, network watchers…) —
@@ -599,12 +599,6 @@ pub fn demo_topology() -> Topology {
             id("rg-data", "sqlsrv-main"),
             EdgeKind::Association,
             "on server",
-        ),
-        (
-            id("rg-app", "snap-decom"),
-            id("rg-app", "disk-decom"),
-            EdgeKind::Association,
-            "snapshot of",
         ),
         (
             id("rg-ops", "rsv-backup"),

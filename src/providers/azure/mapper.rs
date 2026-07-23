@@ -23,6 +23,7 @@ pub struct AzureInventory {
     pub bastions: Vec<AzBastion>,
     pub vmss: Vec<AzVmss>,
     pub postgres: Vec<AzPgFlexServer>,
+    pub private_endpoints: Vec<AzPrivateEndpoint>,
     /// Backup items per Recovery Services vault: (vault id, item).
     pub backup_items: Vec<(String, AzBackupItem)>,
     pub costs: Vec<AzCostRow>,
@@ -339,6 +340,42 @@ pub fn build_topology(inv: AzureInventory) -> Topology {
         .filter_map(|rpc| Some((norm(&rpc.id), norm(rpc.source_vm()?))))
         .collect();
 
+    // Snapshot -> the card it belongs on: its source disk, re-anchored onto
+    // the disk's VM when the disk is folded away. Source gone (deleted since
+    // the snapshot) -> the snapshot keeps its own card.
+    let disk_owner: HashMap<String, String> = inv
+        .resources
+        .iter()
+        .filter(|r| {
+            r.resource_type
+                .eq_ignore_ascii_case("microsoft.compute/disks")
+        })
+        .filter_map(|r| {
+            let owner = r.managed_by.as_deref().filter(|m| !m.is_empty())?;
+            Some((norm(&r.id), norm(owner)))
+        })
+        .collect();
+    let snap_target: HashMap<String, String> = inv
+        .snapshots
+        .iter()
+        .filter_map(|s| {
+            let source = norm(s.creation_data.as_ref()?.source_resource_id.as_deref()?);
+            let target = match disk_owner.get(&source) {
+                Some(owner) => owner.clone(),
+                None if resource_ids.contains(&source) => source,
+                None => return None,
+            };
+            Some((norm(&s.id), target))
+        })
+        .collect();
+
+    // Private endpoint -> the resource it fronts (storage, key vault, …).
+    let pe_target: HashMap<String, String> = inv
+        .private_endpoints
+        .iter()
+        .filter_map(|pe| Some((norm(&pe.id), norm(pe.target_id()?))))
+        .collect();
+
     let mut folded: HashMap<String, Vec<Attachment>> = HashMap::new();
     let mut fold_away: HashSet<String> = HashSet::new();
     for resource in &inv.resources {
@@ -393,6 +430,16 @@ pub fn build_topology(inv: AzureInventory) -> Topology {
                 continue;
             };
             (vm.clone(), "restore point".to_string())
+        } else if ty == "microsoft.compute/snapshots" {
+            let Some(target) = snap_target.get(&id) else {
+                continue; // source deleted — the snapshot keeps its card
+            };
+            (target.clone(), "snapshot".to_string())
+        } else if ty == "microsoft.network/privateendpoints" {
+            let Some(target) = pe_target.get(&id) else {
+                continue; // fronted resource unknown — keep the card
+            };
+            (target.clone(), "private endpoint".to_string())
         } else if let Some(fold) = child_path_fold(&resource.resource_type, &ty, &id) {
             // Any child resource whose parent we know: VM extensions, site
             // slots, CDN endpoints, email domains, DNS zone links…
@@ -766,45 +813,6 @@ pub fn build_topology(inv: AzureInventory) -> Topology {
         }
     }
 
-    // Snapshots point at the disk they were taken from; when that disk is
-    // folded into its VM's card, the edge re-anchors onto the VM.
-    let disk_owner: HashMap<String, String> = inv
-        .resources
-        .iter()
-        .filter(|r| {
-            r.resource_type
-                .eq_ignore_ascii_case("microsoft.compute/disks")
-        })
-        .filter_map(|r| {
-            let owner = r.managed_by.as_deref().filter(|m| !m.is_empty())?;
-            Some((norm(&r.id), norm(owner)))
-        })
-        .collect();
-    for snapshot in &inv.snapshots {
-        let Some(source) = snapshot
-            .creation_data
-            .as_ref()
-            .and_then(|c| c.source_resource_id.as_deref())
-        else {
-            continue;
-        };
-        let source = norm(source);
-        let target = if index.contains_key(&source) {
-            source
-        } else if let Some(owner) = disk_owner.get(&source) {
-            owner.clone()
-        } else {
-            continue; // source disk deleted since — nothing to point at
-        };
-        add_edge(
-            norm(&snapshot.id),
-            target,
-            EdgeKind::Association,
-            "snapshot of",
-            &mut edges,
-        );
-    }
-
     // Boot diagnostics tie a VM to the storage account its console
     // screenshots land in (`https://<account>.blob.core.windows.net/`);
     // managed boot diagnostics have no URI and produce no edge.
@@ -919,6 +927,10 @@ mod tests {
             bastions: serde_json::from_str(include_str!("fixtures/bastions.json")).unwrap(),
             vmss: serde_json::from_str(include_str!("fixtures/vmss.json")).unwrap(),
             postgres: serde_json::from_str(include_str!("fixtures/postgres.json")).unwrap(),
+            private_endpoints: serde_json::from_str(include_str!(
+                "fixtures/private-endpoints.json"
+            ))
+            .unwrap(),
             backup_items: serde_json::from_str(include_str!("fixtures/backup-items.json")).unwrap(),
             costs: serde_json::from_str::<AzCostQueryResponse>(include_str!("fixtures/costs.json"))
                 .unwrap()
@@ -1050,6 +1062,7 @@ mod tests {
                 ("nsg", "nsg-web"),
                 ("public ip", "pip-web"),
                 ("restore point", "rpc-vm-web-01"),
+                ("snapshot", "snap-data"),
                 ("ssh key", "key-admin"),
             ]
         );
@@ -1280,10 +1293,6 @@ mod tests {
                 .find(|e| e.label.as_deref() == Some(label))
                 .unwrap_or_else(|| panic!("no {label} edge"))
         };
-        // Snapshot of a folded disk re-anchors onto the disk's VM.
-        let snap = edge("snapshot of");
-        assert!(snap.source.ends_with("/snapshots/snap-data"));
-        assert!(snap.target.ends_with("/virtualmachines/vm-web-01"));
         // Boot diagnostics tie the VM to its storage account by name.
         let diag = edge("boot diagnostics");
         assert!(diag.source.ends_with("/vm-web-01"));
@@ -1292,6 +1301,39 @@ mod tests {
         let backup = edge("backs up");
         assert!(backup.source.ends_with("/vaults/rsv-main"));
         assert!(backup.target.ends_with("/vm-web-02"));
+    }
+
+    #[test]
+    fn snapshots_and_private_endpoints_fold_onto_their_cards() {
+        let t = build();
+        // The snapshot of DataDisk_1 (folded into vm-web-01) rides on the
+        // VM's card — no standalone node, no edge.
+        assert!(!t.nodes.iter().any(|n| n.name == "snap-data"));
+        assert!(!t
+            .edges
+            .iter()
+            .any(|e| e.label.as_deref() == Some("snapshot of")));
+        let vm = find(&t, "vm-web-01");
+        let snap = vm
+            .attachments
+            .iter()
+            .find(|a| a.kind == "snapshot")
+            .expect("snapshot folded onto the VM");
+        assert_eq!(snap.name, "snap-data");
+        // The private endpoint fronting ststray rides on the storage card.
+        assert!(!t.nodes.iter().any(|n| n.name == "pe-blob"));
+        let storage = find(&t, "ststray");
+        let pe = storage
+            .attachments
+            .iter()
+            .find(|a| a.kind == "private endpoint")
+            .expect("private endpoint folded onto the storage account");
+        assert_eq!(pe.name, "pe-blob");
+        assert!(pe
+            .id
+            .as_deref()
+            .unwrap()
+            .ends_with("/privateendpoints/pe-blob"));
     }
 
     #[test]

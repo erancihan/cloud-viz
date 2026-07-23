@@ -247,6 +247,23 @@ pub fn draw_attachment(painter: &Painter, rect: Rect, kind: &str, color: Color32
             painter.add(line(&[(10.8, 8.0), (10.8, 10.6)]));
             painter.add(line(&[(13.4, 8.0), (13.4, 10.6)]));
         }
+        // Camera for snapshots (a picture of a disk at a moment).
+        "snapshot" => {
+            painter.add(closed(&[
+                (2.5, 5.0),
+                (13.5, 5.0),
+                (13.5, 13.0),
+                (2.5, 13.0),
+            ]));
+            painter.add(Shape::circle_stroke(p(8.0, 9.0), 2.4 * s, stroke));
+            painter.add(line(&[(6.0, 5.0), (7.0, 3.4), (9.0, 3.4), (10.0, 5.0)]));
+        }
+        // A dot plugged into a service ring for private endpoints.
+        "private endpoint" => {
+            painter.add(Shape::circle_filled(p(3.5, 8.0), 1.6 * s, color));
+            painter.add(line(&[(5.1, 8.0), (9.3, 8.0)]));
+            painter.add(Shape::circle_stroke(p(11.6, 8.0), 2.3 * s, stroke));
+        }
         // Shield for network security groups.
         "nsg" => {
             painter.add(closed(&[
