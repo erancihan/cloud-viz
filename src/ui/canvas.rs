@@ -391,10 +391,19 @@ fn draw_container(
                 c32(theme.ink_3),
             );
         } else {
+            // An empty-but-delegated subnet is in use (App Service vnet
+            // integration, ACI, delegated Postgres…) — say so instead of
+            // "No resources". The Microsoft. prefix is dropped for width.
+            let label = node
+                .metadata
+                .iter()
+                .find(|(k, _)| k == "delegatedTo")
+                .map(|(_, v)| format!("Delegated to {}", v.replace("Microsoft.", "")))
+                .unwrap_or_else(|| "No resources".into());
             painter.text(
                 rect.min + Vec2::new(pad, 34.0 * zoom),
                 Align2::LEFT_TOP,
-                "No resources",
+                label,
                 FontId::proportional((11.5 * zoom).max(5.0)),
                 c32(theme.ink_3),
             );
@@ -599,6 +608,7 @@ fn draw_card(
                 "restore point" | "snapshot" | "backup vault" => {
                     c32(theme.category_color(ResourceCategory::Compute))
                 }
+                "diagnostics" => c32(theme.category_color(ResourceCategory::Storage)),
                 _ => c32(theme.ink_3),
             };
             glyphs::draw_attachment(painter, icon, &att.kind, icon_color);

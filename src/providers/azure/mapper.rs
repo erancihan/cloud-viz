@@ -376,6 +376,46 @@ pub fn build_topology(inv: AzureInventory) -> Topology {
         .filter_map(|pe| Some((norm(&pe.id), norm(pe.target_id()?))))
         .collect();
 
+    // Boot diagnostics: a reference row on the VM's card naming the storage
+    // account its console screenshots land in. Unlike the other folds the
+    // account keeps its own card — it's a first-class resource holding
+    // other data — so the row carries no cost (no double count) and there
+    // is no edge. Managed boot diagnostics have no URI and produce nothing.
+    let storage_by_name: HashMap<String, (String, String)> = inv
+        .resources
+        .iter()
+        .filter(|r| {
+            r.resource_type
+                .eq_ignore_ascii_case("microsoft.storage/storageaccounts")
+        })
+        .map(|r| (r.name.to_lowercase(), (norm(&r.id), r.name.clone())))
+        .collect();
+    let mut diag_rows: Vec<(String, String, String)> = Vec::new(); // (vm, storage id, name)
+    let mut diag_users: HashMap<String, usize> = HashMap::new();
+    for vm in &inv.vms {
+        let Some(uri) = vm
+            .diagnostics_profile
+            .as_ref()
+            .and_then(|d| d.boot_diagnostics.as_ref())
+            .and_then(|b| b.storage_uri.as_deref())
+        else {
+            continue;
+        };
+        let host = uri
+            .trim_start_matches("https://")
+            .trim_start_matches("http://");
+        let account = host.split('.').next().unwrap_or_default().to_lowercase();
+        let Some((storage_id, storage_name)) = storage_by_name.get(&account) else {
+            continue;
+        };
+        let vm_id = norm(&vm.id);
+        if !resource_ids.contains(&vm_id) {
+            continue;
+        }
+        *diag_users.entry(storage_id.clone()).or_default() += 1;
+        diag_rows.push((vm_id, storage_id.clone(), storage_name.clone()));
+    }
+
     // Recovery Services vault -> everything it backs up (from the per-vault
     // item listing). A vault protecting nothing keeps its own card.
     let mut vault_owners: HashMap<String, Vec<String>> = HashMap::new();
@@ -634,6 +674,20 @@ pub fn build_topology(inv: AzureInventory) -> Topology {
             let prefix = subnet.address_prefix.clone().or_else(|| {
                 (!subnet.address_prefixes.is_empty()).then(|| subnet.address_prefixes.join(", "))
             });
+            let mut metadata: Vec<(String, String)> = prefix
+                .map(|p| ("addressPrefix".to_string(), p))
+                .into_iter()
+                .collect();
+            // Delegations explain subnets with no member cards: handed over
+            // to App Service vnet integration, ACI, delegated Postgres…
+            let delegated: Vec<&str> = subnet
+                .delegations
+                .iter()
+                .filter_map(|d| d.service_name.as_deref())
+                .collect();
+            if !delegated.is_empty() {
+                metadata.push(("delegatedTo".into(), delegated.join(", ")));
+            }
             add_node(
                 &mut nodes,
                 &mut index,
@@ -649,10 +703,7 @@ pub fn build_topology(inv: AzureInventory) -> Topology {
                     attachments: Vec::new(),
                     cost: None,
                     region: None,
-                    metadata: prefix
-                        .map(|p| ("addressPrefix".to_string(), p))
-                        .into_iter()
-                        .collect(),
+                    metadata,
                 },
             );
         }
@@ -679,6 +730,19 @@ pub fn build_topology(inv: AzureInventory) -> Topology {
             nodes[ai].parent_id = Some(plan_id);
             nodes[pi].container = true;
         }
+    }
+
+    // Boot-diagnostics reference rows (collected in the pre-pass; the
+    // storage accounts themselves stay nodes, so this is not a fold).
+    for (vm_id, storage_id, storage_name) in diag_rows {
+        let shared = diag_users.get(&storage_id).copied().unwrap_or(0) > 1;
+        folded.entry(vm_id).or_default().push(Attachment {
+            kind: "diagnostics".into(),
+            name: storage_name,
+            id: Some(storage_id),
+            shared,
+            cost: None,
+        });
     }
 
     // Hand each owner its folded-in subsidiaries, sorted for determinism
@@ -846,42 +910,6 @@ pub fn build_topology(inv: AzureInventory) -> Topology {
         }
     }
 
-    // Boot diagnostics tie a VM to the storage account its console
-    // screenshots land in (`https://<account>.blob.core.windows.net/`);
-    // managed boot diagnostics have no URI and produce no edge.
-    let storage_by_name: HashMap<String, String> = inv
-        .resources
-        .iter()
-        .filter(|r| {
-            r.resource_type
-                .eq_ignore_ascii_case("microsoft.storage/storageaccounts")
-        })
-        .map(|r| (r.name.to_lowercase(), norm(&r.id)))
-        .collect();
-    for vm in &inv.vms {
-        let Some(uri) = vm
-            .diagnostics_profile
-            .as_ref()
-            .and_then(|d| d.boot_diagnostics.as_ref())
-            .and_then(|b| b.storage_uri.as_deref())
-        else {
-            continue;
-        };
-        let host = uri
-            .trim_start_matches("https://")
-            .trim_start_matches("http://");
-        let account = host.split('.').next().unwrap_or_default().to_lowercase();
-        if let Some(storage_id) = storage_by_name.get(&account) {
-            add_edge(
-                norm(&vm.id),
-                storage_id.clone(),
-                EdgeKind::Association,
-                "boot diagnostics",
-                &mut edges,
-            );
-        }
-    }
-
     // Cost rows for resources that no longer exist (deleted mid-period)
     // have no card to land on — surface the total instead of dropping it
     // silently.
@@ -971,9 +999,14 @@ mod tests {
             )),
             "subscription/resource-group containers should no longer be nodes"
         );
-        // Resources without a network/hosting home sit at the top level.
+        // Resources without a network/hosting home and no edges park in
+        // their category's standalone box (ststray's diagnostics link is a
+        // card row, not an edge).
         let storage = find(&t, "ststray");
-        assert_eq!(storage.parent_id, None);
+        assert_eq!(
+            storage.parent_id.as_deref(),
+            Some("cloudviz:group:category-storage")
+        );
         let vm = find(&t, "vm-web-01");
         assert_eq!(vm.group.as_deref(), Some("rg-app"));
     }
@@ -992,7 +1025,6 @@ mod tests {
         let t = build();
         // ststray is in rg-orphan, which the group listing didn't return.
         let stray = find(&t, "ststray");
-        assert_eq!(stray.parent_id, None);
         assert_eq!(stray.group.as_deref(), Some("rg-orphan"));
     }
 
@@ -1021,6 +1053,13 @@ mod tests {
             .metadata
             .iter()
             .any(|(k, v)| k == "addressPrefix" && v == "10.0.0.0/24"));
+        // snet-b is handed over to App Service vnet integration — the
+        // delegation surfaces as metadata (and as the empty-box label).
+        let snet_b = subnets.iter().find(|s| s.name == "snet-b").unwrap();
+        assert!(snet_b
+            .metadata
+            .iter()
+            .any(|(k, v)| k == "delegatedTo" && v == "Microsoft.Web/serverFarms"));
     }
 
     #[test]
@@ -1077,6 +1116,7 @@ mod tests {
                 ("disk", "DataDisk_1"),
                 ("extension", "AADSSHLoginForLinux"),
                 ("nic", "nic-web-01"),
+                ("diagnostics", "ststray"),
                 ("nsg", "nsg-web"),
                 ("public ip", "pip-web"),
                 ("restore point", "rpc-vm-web-01"),
@@ -1303,18 +1343,8 @@ mod tests {
     }
 
     #[test]
-    fn snapshot_backup_and_boot_diagnostics_edges() {
+    fn vault_and_boot_diagnostics_ride_on_cards_not_edges() {
         let t = build();
-        let edge = |label: &str| {
-            t.edges
-                .iter()
-                .find(|e| e.label.as_deref() == Some(label))
-                .unwrap_or_else(|| panic!("no {label} edge"))
-        };
-        // Boot diagnostics tie the VM to its storage account by name.
-        let diag = edge("boot diagnostics");
-        assert!(diag.source.ends_with("/vm-web-01"));
-        assert!(diag.target.ends_with("/storageaccounts/ststray"));
         // The vault folds onto the card it backs up — no node, no edge.
         assert!(!t.nodes.iter().any(|n| n.name == "rsv-main"));
         assert!(!t
@@ -1328,6 +1358,21 @@ mod tests {
             .expect("vault folded onto the protected VM");
         assert_eq!(vault.name, "rsv-main");
         assert!(!vault.shared);
+        // Boot diagnostics become a reference row on the VM — the storage
+        // account keeps its own card, carries its own cost, and no edge is
+        // drawn.
+        assert!(!t
+            .edges
+            .iter()
+            .any(|e| e.label.as_deref() == Some("boot diagnostics")));
+        let diag = find(&t, "vm-web-01")
+            .attachments
+            .iter()
+            .find(|a| a.kind == "diagnostics")
+            .expect("diagnostics row on the VM");
+        assert_eq!(diag.name, "ststray");
+        assert_eq!(diag.cost, None, "cost stays on the storage card");
+        assert!(t.nodes.iter().any(|n| n.name == "ststray"));
     }
 
     #[test]

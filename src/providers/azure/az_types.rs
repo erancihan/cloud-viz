@@ -78,6 +78,16 @@ pub struct AzSubnet {
     pub address_prefixes: Vec<String>,
     #[serde(default, rename = "networkSecurityGroup")]
     pub network_security_group: Option<AzIdRef>,
+    /// Who the subnet is handed over to (App Service vnet integration, ACI,
+    /// delegated PostgreSQL…) — explains subnets with no member cards.
+    #[serde(default)]
+    pub delegations: Vec<AzDelegation>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct AzDelegation {
+    #[serde(default, rename = "serviceName")]
+    pub service_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

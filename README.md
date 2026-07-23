@@ -64,7 +64,9 @@ cargo run -- --export-svg topo.svg --provider azure      # your live estate
   resource whose parent is on the canvas (VM extensions, deployment
   slots, CDN endpoints, email domains, private DNS zone links…) render as
   icon rows on the owner's card, with the full list also in the details
-  panel.
+  panel. Boot diagnostics appear as a *reference* row on the VM naming
+  the storage account — the account keeps its own card and its own cost,
+  and delete plans leave it alone.
   Hardware rows come first; security / reachability / backups sit below
   their own separator, colored by category, with a link icon when shared
   across nodes. Unused keys, unattached disks and IPs, container
@@ -77,13 +79,16 @@ cargo run -- --export-svg topo.svg --provider azure      # your live estate
   Storage, Security…) — all styled like a virtual network so nothing
   loiters. A single association keeps a card free. Cost rows for resources
   deleted during the billing period surface as a warning instead of
-  vanishing silently. Remaining relationships (VM → diagnostics storage,
-  database → server, …) route as relaxed beziers.
+  vanishing silently. Remaining relationships (database → server, …)
+  route as relaxed beziers.
 - Nests services into the subnet they live in even without a NIC: Bastion
   hosts (their AzureBastionSubnet), vnet-integrated PostgreSQL flexible
   servers (their delegated subnet), standalone VM scale sets — and function
   apps into their App Service plan (`az functionapp list`; `az webapp list`
-  omits them).
+  omits them). Subnet delegations surface as metadata, and an
+  empty-but-delegated subnet labels itself "Delegated to …" instead of
+  "No resources", so App Service vnet integration and ACI subnets don't
+  read as idle.
 - Shows cost on each card (top-right badge): one Cost Management query per
   subscription (`az rest` — actual cost grouped by ResourceId), so a VM's
   badge is the VM plus everything folded into its card (disks, public IPs,
