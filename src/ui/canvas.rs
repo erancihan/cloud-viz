@@ -317,7 +317,7 @@ fn draw_container(
     painter.rect_filled(*rect, rounding, c32(fill));
 
     let stroke = Stroke::new(
-        1.5,
+        1.5_f32,
         if is_scope {
             c32(theme.hairline)
         } else {
@@ -333,7 +333,7 @@ fn draw_container(
         painter.rect_stroke(
             rect.expand(2.0),
             rounding,
-            Stroke::new(2.0, c32(theme.accent)),
+            Stroke::new(2.0_f32, c32(theme.accent)),
             StrokeKind::Outside,
         );
     }
@@ -435,14 +435,14 @@ fn draw_card(
     painter.rect_stroke(
         *rect,
         rounding,
-        Stroke::new(1.0, border),
+        Stroke::new(1.0_f32, border),
         StrokeKind::Inside,
     );
     if selected {
         painter.rect_stroke(
             rect.expand(2.0),
             rounding,
-            Stroke::new(2.0, c32(theme.accent)),
+            Stroke::new(2.0_f32, c32(theme.accent)),
             StrokeKind::Outside,
         );
     }
@@ -572,7 +572,7 @@ fn draw_card(
                 Pos2::new(rect.min.x + 12.0 * zoom, divider_y),
                 Pos2::new(rect.max.x - 12.0 * zoom, divider_y),
             ],
-            Stroke::new(1.0, c32(theme.hairline)),
+            Stroke::new(1.0_f32, c32(theme.hairline)),
         );
         let split = secondary_split_index(&node.attachments);
         for (i, att) in node.attachments.iter().enumerate() {
@@ -589,7 +589,7 @@ fn draw_card(
                             Pos2::new(rect.min.x + 20.0 * zoom, sep_y),
                             Pos2::new(rect.max.x - 20.0 * zoom, sep_y),
                         ],
-                        Stroke::new(1.0, c32(theme.hairline)),
+                        Stroke::new(1.0_f32, c32(theme.hairline)),
                     );
                 }
             }
@@ -733,7 +733,7 @@ fn draw_minimap(
     painter.rect_stroke(
         map,
         8.0,
-        Stroke::new(1.0, c32(theme.hairline)),
+        Stroke::new(1.0_f32, c32(theme.hairline)),
         StrokeKind::Inside,
     );
 
@@ -762,7 +762,7 @@ fn draw_minimap(
             painter.rect_stroke(
                 r,
                 2.0,
-                Stroke::new(0.6, c32a(theme.ink_3, 90)),
+                Stroke::new(0.6_f32, c32a(theme.ink_3, 90)),
                 StrokeKind::Inside,
             );
         } else {
@@ -782,7 +782,7 @@ fn draw_minimap(
         painter.rect_stroke(
             view_r,
             2.0,
-            Stroke::new(1.2, c32(theme.accent)),
+            Stroke::new(1.2_f32, c32(theme.accent)),
             StrokeKind::Inside,
         );
     }
