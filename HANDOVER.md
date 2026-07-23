@@ -57,7 +57,8 @@ File-by-file:
 | `src/providers/azure/mod.rs` | `AzureProvider`: status / scopes / fetch orchestration; required vs best-effort listings. |
 | `src/providers/azure/fixtures/*.json` | Recorded `az` output; drives the mapper tests. |
 | `src/providers/demo.rs` | `DemoProvider` + `demo_topology()` sample estate (covers every category + edge kind). |
-| `src/layout.rs` | Deterministic nested layout; `Rect` helpers; spacing constants. |
+| `src/cache.rs` | On-disk topology cache keyed by provider + scope (start-up shows it instantly; ⟳ Refresh fetches live). Bump `cache::VERSION` whenever the `Topology` shape changes. |
+| `src/layout.rs` | Deterministic layout: shelf-packed containers (vnet ▸ subnet ▸ members) + a top-level compound spring embedder that clusters connected resources, then aligns all virtual networks onto one horizontal row; `Rect` helpers; spacing constants. |
 | `src/geom.rs` | Edge routing (`route_edge`, `EdgePath`, arrowheads, `label_t` stagger). |
 | `src/theme.rs` | `Theme` (`LIGHT`/`DARK`), `Rgb`, `mix()`, per-category colors. |
 | `src/ui/canvas.rs` | Camera (pan/zoom), hit-testing, painting containers/cards/edges, minimap. |
@@ -133,9 +134,15 @@ When you touch `ui/canvas.rs` interaction code, run the app locally.
 ## 7. Known limitations / gaps
 
 - **Read-only.** No create/rename/tag/delete yet (deliberate; see roadmap).
-- **Edge coverage is shallow.** Only NIC-derived relationships
-  (VM→NIC→subnet, NIC→public IP) plus the demo's hand-authored edges. No load
-  balancer wiring, private endpoints, VNet peering, or app→database links.
+- **Edge coverage is moderate.** NIC wiring re-anchors onto the VM (VM inside
+  its subnet, VM→public IP, NSG→VM), `managedBy` folds attached disks into
+  the VM card, extensions/slots fold into their parent, `az webapp list`
+  nests App Services inside their plan, and `az aks list`'s
+  `nodeResourceGroup` nests a cluster's whole `MC_...` group inside it. Still
+  missing: load balancer backend wiring, private endpoints, VNet peering,
+  app→database links, and standalone VM scale set → subnet nesting
+  (candidates: `az vmss list` network profiles, `az network lb list`, or
+  Azure Resource Graph).
 - **Azure is the only live provider.**
 - **No CI.** fmt/clippy/test are manual. First recommended task below.
 - **No PNG export, no saved snapshots / drift comparison.**
@@ -161,7 +168,9 @@ When you touch `ui/canvas.rs` interaction code, run the app locally.
 ## 9. Gotchas
 
 - **Two glyph painters** exist (`ui/glyphs.rs` for egui, `export.rs::glyph_svg`
-  for SVG). Changing an icon means changing both.
+  for SVG) — and likewise for the attachment-row mini icons
+  (`glyphs::draw_attachment` / `export.rs::attachment_glyph_svg`). Changing an
+  icon means changing both.
 - **Windows `az`** is a `.cmd` shim — `cli.rs` already routes through `cmd /C`;
   don't "simplify" that away.
 - **Best-effort listings**: `az network vnet/nic list` failures become

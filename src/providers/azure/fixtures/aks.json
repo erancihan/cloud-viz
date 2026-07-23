@@ -1,0 +1,9 @@
+[
+  {
+    "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-app/providers/Microsoft.ContainerService/managedClusters/aks-rex",
+    "name": "aks-rex",
+    "location": "eastus2",
+    "nodeResourceGroup": "MC_rg-app_aks-rex_eastus2",
+    "resourceGroup": "rg-app"
+  }
+]

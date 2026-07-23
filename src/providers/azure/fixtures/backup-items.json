@@ -1,0 +1,10 @@
+[
+  [
+    "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-app/providers/Microsoft.RecoveryServices/vaults/rsv-main",
+    {
+      "properties": {
+        "virtualMachineId": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-app/providers/Microsoft.Compute/virtualMachines/vm-web-02"
+      }
+    }
+  ]
+]

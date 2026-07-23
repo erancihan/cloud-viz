@@ -180,6 +180,159 @@ pub fn draw(painter: &Painter, rect: Rect, category: ResourceCategory, color: Co
     }
 }
 
+/// Mini glyphs for attachment rows on a card (disk / nic / extension / slot),
+/// same 16x16 grid as the category glyphs. Mirrored by
+/// `export.rs::attachment_glyph_svg` — keep the two in sync.
+pub fn draw_attachment(painter: &Painter, rect: Rect, kind: &str, color: Color32) {
+    let s = rect.width() / 16.0;
+    let o = rect.min;
+    let p = |x: f32, y: f32| Pos2::new(o.x + x * s, o.y + y * s);
+    let stroke = Stroke::new((1.5 * s).max(1.0), color);
+    let line =
+        |pts: &[(f32, f32)]| Shape::line(pts.iter().map(|&(x, y)| p(x, y)).collect(), stroke);
+    let closed = |pts: &[(f32, f32)]| {
+        Shape::closed_line(pts.iter().map(|&(x, y)| p(x, y)).collect(), stroke)
+    };
+
+    match kind {
+        // Drive: flat box with a status dot.
+        "disk" => {
+            painter.add(closed(&[
+                (2.5, 4.5),
+                (13.5, 4.5),
+                (13.5, 11.5),
+                (2.5, 11.5),
+            ]));
+            painter.add(line(&[(2.5, 8.7), (13.5, 8.7)]));
+            painter.add(Shape::circle_filled(p(11.4, 10.1), 0.8 * s, color));
+        }
+        // Reuse the network triangle for NICs.
+        "nic" => draw(painter, rect, ResourceCategory::Network, color),
+        // Puzzle piece with a top tab.
+        "extension" => {
+            painter.add(closed(&[
+                (2.8, 7.0),
+                (6.2, 7.0),
+                (6.2, 5.4),
+                (7.1, 4.4),
+                (8.9, 4.4),
+                (9.8, 5.4),
+                (9.8, 7.0),
+                (13.2, 7.0),
+                (13.2, 13.2),
+                (2.8, 13.2),
+            ]));
+        }
+        // Globe for public IPs (internet reachability).
+        "public ip" => {
+            painter.add(Shape::circle_stroke(p(8.0, 8.0), 5.4 * s, stroke));
+            painter.add(Shape::Ellipse(EllipseShape {
+                center: p(8.0, 8.0),
+                radius: Vec2::new(2.4 * s, 5.4 * s),
+                fill: Color32::TRANSPARENT,
+                stroke,
+            }));
+            painter.add(line(&[(2.6, 8.0), (13.4, 8.0)]));
+        }
+        // Clock for restore points (point-in-time backups).
+        "restore point" => {
+            painter.add(Shape::circle_stroke(p(8.0, 8.0), 5.5 * s, stroke));
+            painter.add(line(&[(8.0, 8.0), (8.0, 4.4)]));
+            painter.add(line(&[(8.0, 8.0), (10.8, 9.4)]));
+        }
+        // Key: ring head, shaft, two teeth.
+        "ssh key" => {
+            painter.add(Shape::circle_stroke(p(4.8, 8.0), 2.4 * s, stroke));
+            painter.add(line(&[(7.2, 8.0), (13.4, 8.0)]));
+            painter.add(line(&[(10.8, 8.0), (10.8, 10.6)]));
+            painter.add(line(&[(13.4, 8.0), (13.4, 10.6)]));
+        }
+        // Heartbeat trace for boot-diagnostics reference rows.
+        "diagnostics" => {
+            painter.add(line(&[
+                (2.5, 8.0),
+                (5.0, 8.0),
+                (6.5, 4.5),
+                (9.0, 11.5),
+                (10.5, 8.0),
+                (13.5, 8.0),
+            ]));
+        }
+        // Safe with a dial for Recovery Services vaults.
+        "backup vault" => {
+            painter.add(closed(&[
+                (3.0, 3.0),
+                (13.0, 3.0),
+                (13.0, 12.0),
+                (3.0, 12.0),
+            ]));
+            painter.add(Shape::circle_stroke(p(8.0, 7.5), 2.2 * s, stroke));
+            painter.add(line(&[(4.8, 12.0), (4.8, 13.6)]));
+            painter.add(line(&[(11.2, 12.0), (11.2, 13.6)]));
+        }
+        // Camera for snapshots (a picture of a disk at a moment).
+        "snapshot" => {
+            painter.add(closed(&[
+                (2.5, 5.0),
+                (13.5, 5.0),
+                (13.5, 13.0),
+                (2.5, 13.0),
+            ]));
+            painter.add(Shape::circle_stroke(p(8.0, 9.0), 2.4 * s, stroke));
+            painter.add(line(&[(6.0, 5.0), (7.0, 3.4), (9.0, 3.4), (10.0, 5.0)]));
+        }
+        // A dot plugged into a service ring for private endpoints.
+        "private endpoint" => {
+            painter.add(Shape::circle_filled(p(3.5, 8.0), 1.6 * s, color));
+            painter.add(line(&[(5.1, 8.0), (9.3, 8.0)]));
+            painter.add(Shape::circle_stroke(p(11.6, 8.0), 2.3 * s, stroke));
+        }
+        // Shield for network security groups.
+        "nsg" => {
+            painter.add(closed(&[
+                (8.0, 2.6),
+                (13.0, 4.6),
+                (12.4, 9.4),
+                (8.0, 13.4),
+                (3.6, 9.4),
+                (3.0, 4.6),
+            ]));
+        }
+        // Two stacked layers for deployment slots.
+        "slot" => {
+            painter.add(closed(&[
+                (3.0, 3.0),
+                (10.4, 3.0),
+                (10.4, 10.4),
+                (3.0, 10.4),
+            ]));
+            painter.add(closed(&[
+                (5.6, 5.6),
+                (13.0, 5.6),
+                (13.0, 13.0),
+                (5.6, 13.0),
+            ]));
+        }
+        _ => {
+            for x in [4.0, 8.0, 12.0] {
+                painter.add(Shape::circle_filled(p(x, 8.0), 1.0 * s, color));
+            }
+        }
+    }
+}
+
+/// Link badge for shared attachments (an SSH key used by several VMs): two
+/// rings joined by a bar. Mirrored by `export.rs::link_glyph_svg`.
+pub fn draw_link(painter: &Painter, rect: Rect, color: Color32) {
+    let s = rect.width() / 16.0;
+    let o = rect.min;
+    let p = |x: f32, y: f32| Pos2::new(o.x + x * s, o.y + y * s);
+    let stroke = Stroke::new((1.6 * s).max(1.0), color);
+    painter.add(Shape::circle_stroke(p(5.0, 11.0), 2.6 * s, stroke));
+    painter.add(Shape::circle_stroke(p(11.0, 5.0), 2.6 * s, stroke));
+    painter.add(Shape::line(vec![p(6.8, 9.2), p(9.2, 6.8)], stroke));
+}
+
 /// Elliptical arc approximated by a polyline (egui has no arc primitive).
 fn arc(center: Pos2, rx: f32, ry: f32, from: f32, to: f32, stroke: Stroke) -> Shape {
     const STEPS: usize = 20;

@@ -1,6 +1,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod app;
+mod cache;
+mod config;
 mod export;
 mod geom;
 mod layout;
@@ -32,7 +34,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .iter()
             .find(|p| p.info().id == provider_id)
             .ok_or_else(|| format!("unknown provider: {provider_id}"))?;
-        let topology = provider.fetch_topology(scope)?;
+        let topology = provider.fetch_topology(scope, model::CostPeriod::MonthToDate)?;
         std::fs::write(path, export::to_svg(&topology, &theme))?;
         eprintln!(
             "wrote {} ({} nodes, {} edges)",
@@ -41,6 +43,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             topology.edges.len()
         );
         return Ok(());
+    }
+
+    // Under WSLg, prefer the X11 (XWayland) backend. WSLg gives X11 windows a
+    // native Windows title bar and maximizes them correctly. The Wayland-native
+    // path instead makes winit draw its own client-side decorations, and WSLg
+    // fails to update that border/shadow when the window is maximized, leaving a
+    // stale outline painted over the canvas. winit picks Wayland whenever
+    // WAYLAND_DISPLAY is set, so hide it to fall back to X11 — but only when an
+    // X display is actually available, so we never strand the app with no
+    // usable backend.
+    if std::env::var_os("WSL_DISTRO_NAME").is_some()
+        && std::env::var_os("DISPLAY").is_some_and(|v| !v.is_empty())
+    {
+        std::env::remove_var("WAYLAND_DISPLAY");
+        std::env::remove_var("WAYLAND_SOCKET");
     }
 
     let options = eframe::NativeOptions {

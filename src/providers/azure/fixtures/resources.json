@@ -4,7 +4,9 @@
     "location": "westeurope",
     "name": "vm-web-01",
     "resourceGroup": "RG-App",
-    "tags": { "role": "web" },
+    "tags": {
+      "role": "web"
+    },
     "type": "Microsoft.Compute/virtualMachines"
   },
   {
@@ -36,8 +38,289 @@
     "location": "northeurope",
     "name": "ststray",
     "resourceGroup": "rg-orphan",
-    "sku": { "name": "Standard_LRS" },
+    "sku": {
+      "name": "Standard_LRS"
+    },
     "tags": null,
     "type": "Microsoft.Storage/storageAccounts"
+  },
+  {
+    "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-app/providers/Microsoft.Compute/disks/DataDisk_1",
+    "location": "westeurope",
+    "managedBy": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/RG-APP/providers/Microsoft.Compute/virtualMachines/vm-web-01",
+    "name": "DataDisk_1",
+    "resourceGroup": "rg-app",
+    "sku": {
+      "name": "Premium_LRS"
+    },
+    "tags": null,
+    "type": "Microsoft.Compute/disks"
+  },
+  {
+    "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-net/providers/Microsoft.Network/networkSecurityGroups/nsg-web",
+    "location": "westeurope",
+    "name": "nsg-web",
+    "resourceGroup": "rg-net",
+    "tags": null,
+    "type": "Microsoft.Network/networkSecurityGroups"
+  },
+  {
+    "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-app/providers/Microsoft.Compute/virtualMachines/vm-web-01/extensions/AADSSHLoginForLinux",
+    "location": "westeurope",
+    "name": "vm-web-01/AADSSHLoginForLinux",
+    "resourceGroup": "rg-app",
+    "tags": null,
+    "type": "Microsoft.Compute/virtualMachines/extensions"
+  },
+  {
+    "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-app/providers/Microsoft.Compute/disks/disk-orphan",
+    "location": "westeurope",
+    "managedBy": null,
+    "name": "disk-orphan",
+    "resourceGroup": "rg-app",
+    "sku": {
+      "name": "Standard_LRS"
+    },
+    "tags": null,
+    "type": "Microsoft.Compute/disks"
+  },
+  {
+    "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-app/providers/Microsoft.Web/serverFarms/plan-portal",
+    "location": "westeurope",
+    "name": "plan-portal",
+    "resourceGroup": "rg-app",
+    "sku": {
+      "name": "P1v3",
+      "tier": "PremiumV3"
+    },
+    "tags": null,
+    "type": "Microsoft.Web/serverFarms"
+  },
+  {
+    "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-app/providers/Microsoft.Web/sites/app-portal",
+    "kind": "app,linux",
+    "location": "westeurope",
+    "name": "app-portal",
+    "resourceGroup": "rg-app",
+    "tags": null,
+    "type": "Microsoft.Web/sites"
+  },
+  {
+    "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-app/providers/Microsoft.Web/sites/app-portal/slots/staging",
+    "kind": "app,linux",
+    "location": "westeurope",
+    "name": "app-portal/staging",
+    "resourceGroup": "rg-app",
+    "tags": null,
+    "type": "Microsoft.Web/sites/slots"
+  },
+  {
+    "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-app/providers/Microsoft.Compute/virtualMachines/vm-web-02",
+    "location": "westeurope",
+    "name": "vm-web-02",
+    "resourceGroup": "rg-app",
+    "tags": null,
+    "type": "Microsoft.Compute/virtualMachines"
+  },
+  {
+    "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-app/providers/Microsoft.Compute/sshPublicKeys/key-admin",
+    "location": "westeurope",
+    "name": "key-admin",
+    "resourceGroup": "rg-app",
+    "tags": null,
+    "type": "Microsoft.Compute/sshPublicKeys"
+  },
+  {
+    "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-app/providers/Microsoft.Compute/sshPublicKeys/key-orphan",
+    "location": "westeurope",
+    "name": "key-orphan",
+    "resourceGroup": "rg-app",
+    "tags": null,
+    "type": "Microsoft.Compute/sshPublicKeys"
+  },
+  {
+    "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-app/providers/Microsoft.ContainerService/managedClusters/aks-rex",
+    "location": "eastus2",
+    "name": "aks-rex",
+    "resourceGroup": "rg-app",
+    "tags": null,
+    "type": "Microsoft.ContainerService/managedClusters"
+  },
+  {
+    "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/MC_rg-app_aks-rex_eastus2/providers/Microsoft.Compute/virtualMachineScaleSets/aks-nodepool1-vmss",
+    "location": "eastus2",
+    "name": "aks-nodepool1-vmss",
+    "resourceGroup": "MC_rg-app_aks-rex_eastus2",
+    "tags": null,
+    "type": "Microsoft.Compute/virtualMachineScaleSets"
+  },
+  {
+    "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/MC_rg-app_aks-rex_eastus2/providers/Microsoft.Network/publicIPAddresses/kubernetes-lb-ip",
+    "location": "eastus2",
+    "name": "kubernetes-lb-ip",
+    "resourceGroup": "MC_rg-app_aks-rex_eastus2",
+    "tags": null,
+    "type": "Microsoft.Network/publicIPAddresses"
+  },
+  {
+    "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/NetworkWatcherRG/providers/Microsoft.Network/networkWatchers/NetworkWatcher_westeurope",
+    "location": "westeurope",
+    "name": "NetworkWatcher_westeurope",
+    "resourceGroup": "NetworkWatcherRG",
+    "tags": null,
+    "type": "Microsoft.Network/networkWatchers"
+  },
+  {
+    "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-app/providers/Microsoft.Compute/restorePointCollections/rpc-vm-web-01",
+    "location": "westeurope",
+    "name": "rpc-vm-web-01",
+    "resourceGroup": "rg-app",
+    "tags": null,
+    "type": "Microsoft.Compute/restorePointCollections"
+  },
+  {
+    "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-app/providers/Microsoft.Cdn/profiles/cdn-apps",
+    "location": "westeurope",
+    "name": "cdn-apps",
+    "resourceGroup": "rg-app",
+    "tags": null,
+    "type": "microsoft.cdn/profiles"
+  },
+  {
+    "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-app/providers/Microsoft.Cdn/profiles/cdn-apps/endpoints/ep-portal",
+    "location": "westeurope",
+    "name": "cdn-apps/ep-portal",
+    "resourceGroup": "rg-app",
+    "tags": null,
+    "type": "microsoft.cdn/profiles/endpoints"
+  },
+  {
+    "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-app/providers/Microsoft.Communication/emailServices/mail-contoso",
+    "location": "westeurope",
+    "name": "mail-contoso",
+    "resourceGroup": "rg-app",
+    "tags": null,
+    "type": "Microsoft.Communication/EmailServices"
+  },
+  {
+    "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-app/providers/Microsoft.Communication/emailServices/mail-contoso/domains/contoso.com",
+    "location": "westeurope",
+    "name": "mail-contoso/contoso.com",
+    "resourceGroup": "rg-app",
+    "tags": null,
+    "type": "Microsoft.Communication/EmailServices/Domains"
+  },
+  {
+    "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-app/providers/Microsoft.Network/privateDnsZones/ghost-zone/virtualNetworkLinks/link-a",
+    "location": "westeurope",
+    "name": "ghost-zone/link-a",
+    "resourceGroup": "rg-app",
+    "tags": null,
+    "type": "Microsoft.Network/privateDnsZones/virtualNetworkLinks"
+  },
+  {
+    "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-app/providers/microsoft.insights/actiongroups/ag-oncall",
+    "location": "westeurope",
+    "name": "ag-oncall",
+    "resourceGroup": "rg-app",
+    "tags": null,
+    "type": "microsoft.insights/actiongroups"
+  },
+  {
+    "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-app/providers/Microsoft.Portal/dashboards/dash-main",
+    "location": "westeurope",
+    "name": "dash-main",
+    "resourceGroup": "rg-app",
+    "tags": null,
+    "type": "Microsoft.Portal/dashboards"
+  },
+  {
+    "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-data/providers/Microsoft.Sql/servers/sql-main",
+    "location": "westeurope",
+    "name": "sql-main",
+    "resourceGroup": "rg-data",
+    "tags": null,
+    "type": "Microsoft.Sql/servers"
+  },
+  {
+    "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-data/providers/Microsoft.Sql/servers/sql-main/databases/ordersdb",
+    "location": "westeurope",
+    "name": "sql-main/ordersdb",
+    "resourceGroup": "rg-data",
+    "tags": null,
+    "type": "Microsoft.Sql/servers/databases"
+  },
+  {
+    "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-app/providers/Microsoft.Web/serverFarms/ASP-workers",
+    "location": "westeurope",
+    "name": "ASP-workers",
+    "resourceGroup": "rg-app",
+    "tags": null,
+    "type": "Microsoft.Web/serverFarms"
+  },
+  {
+    "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-app/providers/Microsoft.Web/sites/func-worker",
+    "location": "westeurope",
+    "name": "func-worker",
+    "resourceGroup": "rg-app",
+    "tags": null,
+    "type": "Microsoft.Web/sites",
+    "kind": "functionapp,linux"
+  },
+  {
+    "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-app/providers/Microsoft.Compute/snapshots/snap-data",
+    "location": "westeurope",
+    "name": "snap-data",
+    "resourceGroup": "rg-app",
+    "tags": null,
+    "type": "Microsoft.Compute/snapshots"
+  },
+  {
+    "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-net/providers/Microsoft.Network/bastionHosts/bast-hub",
+    "location": "westeurope",
+    "name": "bast-hub",
+    "resourceGroup": "rg-net",
+    "tags": null,
+    "type": "Microsoft.Network/bastionHosts"
+  },
+  {
+    "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-app/providers/Microsoft.Compute/virtualMachineScaleSets/vmss-runners",
+    "location": "westeurope",
+    "name": "vmss-runners",
+    "resourceGroup": "rg-app",
+    "tags": null,
+    "type": "Microsoft.Compute/virtualMachineScaleSets"
+  },
+  {
+    "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-data/providers/Microsoft.DBforPostgreSQL/flexibleServers/pg-flex-a",
+    "location": "westeurope",
+    "name": "pg-flex-a",
+    "resourceGroup": "rg-data",
+    "tags": null,
+    "type": "Microsoft.DBforPostgreSQL/flexibleServers"
+  },
+  {
+    "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-data/providers/Microsoft.DBforPostgreSQL/flexibleServers/pg-flex-pub",
+    "location": "westeurope",
+    "name": "pg-flex-pub",
+    "resourceGroup": "rg-data",
+    "tags": null,
+    "type": "Microsoft.DBforPostgreSQL/flexibleServers"
+  },
+  {
+    "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-app/providers/Microsoft.RecoveryServices/vaults/rsv-main",
+    "location": "westeurope",
+    "name": "rsv-main",
+    "resourceGroup": "rg-app",
+    "tags": null,
+    "type": "Microsoft.RecoveryServices/vaults"
+  },
+  {
+    "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-data/providers/Microsoft.Network/privateEndpoints/pe-blob",
+    "location": "westeurope",
+    "name": "pe-blob",
+    "resourceGroup": "rg-data",
+    "tags": null,
+    "type": "Microsoft.Network/privateEndpoints"
   }
 ]

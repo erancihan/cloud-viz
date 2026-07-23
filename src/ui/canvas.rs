@@ -3,12 +3,12 @@
 
 use crate::geom::{label_t, route_edge};
 use crate::layout::Layout;
-use crate::model::{EdgeKind, ResourceCategory, Topology};
+use crate::model::{format_cost, EdgeKind, ResourceCategory, Topology};
 use crate::theme::{mix, Theme};
 use crate::ui::{c32, c32a, glyphs};
 use eframe::egui::{
-    Align2, Color32, CursorIcon, FontId, Painter, Pos2, Rect, Response, Sense, Shape, Stroke,
-    StrokeKind, Ui, Vec2,
+    Align2, Button, Color32, CursorIcon, FontId, Painter, Pos2, Rect, Response, Sense, Shape,
+    Stroke, StrokeKind, Ui, Vec2,
 };
 
 pub struct Camera {
@@ -36,6 +36,11 @@ pub struct CanvasOutput {
 
 const MINIMAP_SIZE: Vec2 = Vec2::new(200.0, 140.0);
 const MINIMAP_MARGIN: f32 = 14.0;
+/// Zoom in/out buttons stacked above the minimap in the bottom-right corner.
+const ZOOM_BTN: f32 = 26.0;
+const ZOOM_BTN_GAP: f32 = 6.0;
+/// Per click; scroll zoom stays continuous.
+const ZOOM_STEP: f32 = 1.25;
 
 pub fn show(
     ui: &mut Ui,
@@ -68,7 +73,23 @@ pub fn show(
         .hover_pos()
         .is_some_and(|p| minimap_rect.contains(p));
 
-    handle_camera_input(ui, camera, &response, rect, pointer_over_minimap);
+    // Zoom buttons live just above the minimap; like it, they mask the
+    // canvas underneath from hover/click/scroll.
+    let btn_x = rect.right() - MINIMAP_MARGIN - ZOOM_BTN;
+    let zoom_out_rect = Rect::from_min_size(
+        Pos2::new(btn_x, minimap_rect.top() - MINIMAP_MARGIN - ZOOM_BTN),
+        Vec2::splat(ZOOM_BTN),
+    );
+    let zoom_in_rect = Rect::from_min_size(
+        Pos2::new(btn_x, zoom_out_rect.top() - ZOOM_BTN_GAP - ZOOM_BTN),
+        Vec2::splat(ZOOM_BTN),
+    );
+    let pointer_over_ui = pointer_over_minimap
+        || response
+            .hover_pos()
+            .is_some_and(|p| zoom_in_rect.union(zoom_out_rect).contains(p));
+
+    handle_camera_input(ui, camera, &response, rect, pointer_over_ui);
 
     // Copy out the camera transform so the closures don't hold a borrow on
     // `camera` (the minimap interaction below mutates it for the next frame).
@@ -80,7 +101,7 @@ pub fn show(
         Rect::from_min_max(to_screen(r.x, r.y), to_screen(r.right(), r.bottom()))
     };
 
-    let hovered = if pointer_over_minimap {
+    let hovered = if pointer_over_ui {
         None
     } else {
         response
@@ -93,6 +114,7 @@ pub fn show(
 
     // Paint order: containers (parents already precede children), then edges,
     // then leaf cards, so relaxed curves never cover node content.
+    let subtree = crate::model::subtree_costs(topology);
     for placed in &layout.placed {
         if placed.is_container {
             draw_container(
@@ -103,6 +125,7 @@ pub fn show(
                 theme,
                 camera.zoom,
                 selected == Some(placed.index),
+                subtree[placed.index],
             );
         }
     }
@@ -161,14 +184,26 @@ pub fn show(
         }
     }
 
-    let clicked_node = if response.clicked() && !pointer_over_minimap {
+    // The +/- buttons zoom about the viewport center (scroll zoom anchors on
+    // the cursor instead). Placed after all canvas painting so they sit on
+    // top of the cards.
+    for (label, btn_rect, factor) in [
+        ("+", zoom_in_rect, ZOOM_STEP),
+        ("−", zoom_out_rect, 1.0 / ZOOM_STEP),
+    ] {
+        if ui.put(btn_rect, Button::new(label)).clicked() {
+            zoom_about_center(camera, rect, factor);
+        }
+    }
+
+    let clicked_node = if response.clicked() && !pointer_over_ui {
         response
             .interact_pointer_pos()
             .and_then(|p| hit_test(p, layout, &world_rect))
     } else {
         None
     };
-    let clicked_background = response.clicked() && !pointer_over_minimap && clicked_node.is_none();
+    let clicked_background = response.clicked() && !pointer_over_ui && clicked_node.is_none();
 
     CanvasOutput {
         clicked_node: clicked_node.map(|i| layout.placed[i].index),
@@ -201,6 +236,16 @@ fn handle_camera_input(
             }
         }
     }
+}
+
+/// Zoom by `factor` keeping the viewport center fixed — the +/- buttons'
+/// behavior. Same clamp as scroll zoom.
+fn zoom_about_center(camera: &mut Camera, rect: Rect, factor: f32) {
+    let new_zoom = (camera.zoom * factor).clamp(0.05, 2.5);
+    let center = rect.center() - rect.min;
+    let world = (center - camera.pan) / camera.zoom;
+    camera.pan = center - world * new_zoom;
+    camera.zoom = new_zoom;
 }
 
 pub fn fit(camera: &mut Camera, rect: Rect, layout: &Layout) {
@@ -248,6 +293,7 @@ fn draw_dot_grid(painter: &Painter, rect: Rect, camera: &Camera, theme: &Theme) 
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn draw_container(
     painter: &Painter,
     topology: &Topology,
@@ -256,6 +302,7 @@ fn draw_container(
     theme: &Theme,
     zoom: f32,
     selected: bool,
+    subtree_cost: Option<f64>,
 ) {
     let node = &topology.nodes[placed.index];
     let cat = theme.category_color(node.category);
@@ -270,7 +317,7 @@ fn draw_container(
     painter.rect_filled(*rect, rounding, c32(fill));
 
     let stroke = Stroke::new(
-        1.5,
+        1.5_f32,
         if is_scope {
             c32(theme.hairline)
         } else {
@@ -286,7 +333,7 @@ fn draw_container(
         painter.rect_stroke(
             rect.expand(2.0),
             rounding,
-            Stroke::new(2.0, c32(theme.accent)),
+            Stroke::new(2.0_f32, c32(theme.accent)),
             StrokeKind::Outside,
         );
     }
@@ -304,26 +351,59 @@ fn draw_container(
             kind_font,
             c32(cat),
         );
-        painter.text(
+        let name_rect = painter.text(
             Pos2::new(kind_rect.right() + 10.0 * zoom, baseline.y - 1.5 * zoom),
             Align2::LEFT_TOP,
             &node.name,
             name_font,
             c32(theme.ink),
         );
+        // Right side of the header: subtree cost, then the child count to
+        // its left. The badge sums the box's own cost plus everything nested
+        // inside — how the bill reads for a plan or a vnet. On a box too
+        // narrow to fit it next to the name it drops to the header's second
+        // line instead of overlapping.
+        let mut right = rect.right() - pad;
+        if let Some(total) = subtree_cost {
+            let galley = painter.layout_no_wrap(
+                format_cost(total, topology.currency.as_deref()),
+                FontId::proportional((10.5 * zoom).max(5.0)),
+                c32(theme.ink_2),
+            );
+            let badge_left = right - galley.rect.width();
+            if badge_left - 8.0 * zoom > name_rect.right() {
+                painter.galley(Pos2::new(badge_left, baseline.y), galley, c32(theme.ink_2));
+                right = badge_left - 8.0 * zoom;
+            } else {
+                painter.galley(
+                    Pos2::new(badge_left, rect.min.y + 34.0 * zoom),
+                    galley,
+                    c32(theme.ink_2),
+                );
+            }
+        }
         if placed.child_count > 0 {
             painter.text(
-                Pos2::new(rect.right() - pad, baseline.y),
+                Pos2::new(right, baseline.y),
                 Align2::RIGHT_TOP,
                 placed.child_count.to_string(),
                 FontId::proportional((11.0 * zoom).max(5.0)),
                 c32(theme.ink_3),
             );
         } else {
+            // An empty-but-delegated subnet is in use (App Service vnet
+            // integration, ACI, delegated Postgres…) — say so instead of
+            // "No resources". The Microsoft. prefix is dropped for width.
+            let label = node
+                .metadata
+                .iter()
+                .find(|(k, _)| k == "delegatedTo")
+                .map(|(_, v)| format!("Delegated to {}", v.replace("Microsoft.", "")))
+                .unwrap_or_else(|| "No resources".into());
             painter.text(
                 rect.min + Vec2::new(pad, 34.0 * zoom),
                 Align2::LEFT_TOP,
-                "No resources",
+                label,
                 FontId::proportional((11.5 * zoom).max(5.0)),
                 c32(theme.ink_3),
             );
@@ -355,14 +435,14 @@ fn draw_card(
     painter.rect_stroke(
         *rect,
         rounding,
-        Stroke::new(1.0, border),
+        Stroke::new(1.0_f32, border),
         StrokeKind::Inside,
     );
     if selected {
         painter.rect_stroke(
             rect.expand(2.0),
             rounding,
-            Stroke::new(2.0, c32(theme.accent)),
+            Stroke::new(2.0_f32, c32(theme.accent)),
             StrokeKind::Outside,
         );
     }
@@ -380,9 +460,12 @@ fn draw_card(
         return;
     }
 
+    // The head (chip + text lines) occupies the top LEAF_H of the card;
+    // attachment rows, when present, live below it.
+    let head_h = crate::layout::LEAF_H * zoom;
     let chip_size = 32.0 * zoom;
     let chip = Rect::from_min_size(
-        rect.min + Vec2::new(14.0 * zoom, (rect.height() - chip_size) / 2.0),
+        rect.min + Vec2::new(14.0 * zoom, (head_h - chip_size) / 2.0),
         Vec2::splat(chip_size),
     );
     painter.rect_filled(chip, 8.0 * zoom, c32a(cat, 36));
@@ -396,26 +479,158 @@ fn draw_card(
     let tx = chip.right() + 12.0 * zoom;
     let max_w = rect.right() - 10.0 * zoom - tx;
     let name_font = FontId::proportional((12.5 * zoom).max(6.0));
-    let kind_font = FontId::proportional((11.0 * zoom).max(5.0));
-    let cy = rect.center().y;
-    draw_truncated(
-        painter,
-        Pos2::new(tx, cy - 2.0 * zoom),
-        Align2::LEFT_BOTTOM,
-        &node.name,
-        name_font,
-        c32(theme.ink),
-        max_w,
-    );
-    draw_truncated(
-        painter,
-        Pos2::new(tx, cy + 2.0 * zoom),
-        Align2::LEFT_TOP,
-        &node.kind_label,
-        kind_font,
-        c32(theme.ink_3),
-        max_w,
-    );
+    let sub_font = FontId::proportional((10.5 * zoom).max(5.0));
+    let cy = rect.min.y + head_h / 2.0;
+
+    // Month-to-date cost badge in the head's top-right corner — the resource
+    // plus everything folded into its card. The name line yields the room.
+    let cost_galley = node.total_cost().map(|total| {
+        painter.layout_no_wrap(
+            format_cost(total, topology.currency.as_deref()),
+            sub_font.clone(),
+            c32(theme.ink_2),
+        )
+    });
+    let name_w = match &cost_galley {
+        Some(g) => (max_w - g.rect.width() - 8.0 * zoom).max(24.0 * zoom),
+        None => max_w,
+    };
+
+    if let Some(group) = &node.group {
+        let line = 13.0 * zoom;
+        draw_truncated(
+            painter,
+            Pos2::new(tx, cy - line),
+            Align2::LEFT_CENTER,
+            &node.name,
+            name_font,
+            c32(theme.ink),
+            name_w,
+        );
+        draw_truncated(
+            painter,
+            Pos2::new(tx, cy),
+            Align2::LEFT_CENTER,
+            &node.kind_label,
+            sub_font.clone(),
+            c32(theme.ink_3),
+            max_w,
+        );
+        draw_truncated(
+            painter,
+            Pos2::new(tx, cy + line),
+            Align2::LEFT_CENTER,
+            group,
+            sub_font.clone(),
+            c32a(theme.ink_3, 200),
+            max_w,
+        );
+    } else {
+        draw_truncated(
+            painter,
+            Pos2::new(tx, cy - 2.0 * zoom),
+            Align2::LEFT_BOTTOM,
+            &node.name,
+            name_font,
+            c32(theme.ink),
+            name_w,
+        );
+        draw_truncated(
+            painter,
+            Pos2::new(tx, cy + 2.0 * zoom),
+            Align2::LEFT_TOP,
+            &node.kind_label,
+            sub_font.clone(),
+            c32(theme.ink_3),
+            max_w,
+        );
+    }
+    if let Some(g) = cost_galley {
+        // Centered on the name line: the group layout centers the name at
+        // cy - 13·zoom, the two-line layout bottoms it at cy - 2·zoom.
+        let line_c = if node.group.is_some() {
+            cy - 13.0 * zoom
+        } else {
+            cy - 2.0 * zoom - g.rect.height() / 2.0
+        };
+        let pos = Pos2::new(
+            rect.max.x - 10.0 * zoom - g.rect.width(),
+            line_c - g.rect.height() / 2.0,
+        );
+        painter.galley(pos, g, c32(theme.ink_2));
+    }
+
+    // Attachment rows: a mini icon + name per folded-in subsidiary. The
+    // hardware rows (disks, NICs, extensions, slots) come first; secondary
+    // items (SSH keys, public IPs) sit below their own separator, with a
+    // link icon on the right when shared across nodes.
+    if !node.attachments.is_empty() {
+        use crate::layout::{secondary_split_index, ATTACH_PAD, ATTACH_ROW, ATTACH_SPLIT, LEAF_H};
+        let divider_y = rect.min.y + LEAF_H * zoom;
+        painter.line_segment(
+            [
+                Pos2::new(rect.min.x + 12.0 * zoom, divider_y),
+                Pos2::new(rect.max.x - 12.0 * zoom, divider_y),
+            ],
+            Stroke::new(1.0_f32, c32(theme.hairline)),
+        );
+        let split = secondary_split_index(&node.attachments);
+        for (i, att) in node.attachments.iter().enumerate() {
+            let mut offset = LEAF_H + ATTACH_PAD + (i as f32 + 0.5) * ATTACH_ROW;
+            if let Some(s) = split {
+                if i >= s {
+                    offset += ATTACH_SPLIT;
+                }
+                if i == s {
+                    let sep_y = rect.min.y
+                        + (LEAF_H + ATTACH_PAD + s as f32 * ATTACH_ROW + ATTACH_SPLIT / 2.0) * zoom;
+                    painter.line_segment(
+                        [
+                            Pos2::new(rect.min.x + 20.0 * zoom, sep_y),
+                            Pos2::new(rect.max.x - 20.0 * zoom, sep_y),
+                        ],
+                        Stroke::new(1.0_f32, c32(theme.hairline)),
+                    );
+                }
+            }
+            let cy = rect.min.y + offset * zoom;
+            let icon = Rect::from_center_size(
+                Pos2::new(rect.min.x + 27.0 * zoom, cy),
+                Vec2::splat(11.0 * zoom),
+            );
+            // Secondary glyphs carry their category color (public IP =
+            // network green, SSH key = security red); hardware stays muted.
+            let icon_color = match att.kind.as_str() {
+                "public ip" | "private endpoint" => {
+                    c32(theme.category_color(ResourceCategory::Network))
+                }
+                "ssh key" | "nsg" => c32(theme.category_color(ResourceCategory::Security)),
+                "restore point" | "snapshot" | "backup vault" => {
+                    c32(theme.category_color(ResourceCategory::Compute))
+                }
+                "diagnostics" => c32(theme.category_color(ResourceCategory::Storage)),
+                _ => c32(theme.ink_3),
+            };
+            glyphs::draw_attachment(painter, icon, &att.kind, icon_color);
+            let link_room = if att.shared { 26.0 * zoom } else { 10.0 * zoom };
+            draw_truncated(
+                painter,
+                Pos2::new(rect.min.x + 38.0 * zoom, cy),
+                Align2::LEFT_CENTER,
+                &att.name,
+                sub_font.clone(),
+                c32(theme.ink_2),
+                rect.max.x - link_room - (rect.min.x + 38.0 * zoom),
+            );
+            if att.shared {
+                let badge = Rect::from_center_size(
+                    Pos2::new(rect.max.x - 16.0 * zoom, cy),
+                    Vec2::splat(10.0 * zoom),
+                );
+                glyphs::draw_link(painter, badge, c32(theme.accent));
+            }
+        }
+    }
 }
 
 fn draw_truncated(
@@ -518,7 +733,7 @@ fn draw_minimap(
     painter.rect_stroke(
         map,
         8.0,
-        Stroke::new(1.0, c32(theme.hairline)),
+        Stroke::new(1.0_f32, c32(theme.hairline)),
         StrokeKind::Inside,
     );
 
@@ -547,7 +762,7 @@ fn draw_minimap(
             painter.rect_stroke(
                 r,
                 2.0,
-                Stroke::new(0.6, c32a(theme.ink_3, 90)),
+                Stroke::new(0.6_f32, c32a(theme.ink_3, 90)),
                 StrokeKind::Inside,
             );
         } else {
@@ -567,7 +782,7 @@ fn draw_minimap(
         painter.rect_stroke(
             view_r,
             2.0,
-            Stroke::new(1.2, c32(theme.accent)),
+            Stroke::new(1.2_f32, c32(theme.accent)),
             StrokeKind::Inside,
         );
     }

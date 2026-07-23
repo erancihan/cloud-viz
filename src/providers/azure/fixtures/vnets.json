@@ -1,6 +1,10 @@
 [
   {
-    "addressSpace": { "addressPrefixes": ["10.0.0.0/16"] },
+    "addressSpace": {
+      "addressPrefixes": [
+        "10.0.0.0/16"
+      ]
+    },
     "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-net/providers/Microsoft.Network/virtualNetworks/vnet-hub",
     "location": "westeurope",
     "name": "vnet-hub",
@@ -9,12 +13,25 @@
       {
         "addressPrefix": "10.0.0.0/24",
         "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-net/providers/Microsoft.Network/virtualNetworks/vnet-hub/subnets/snet-a",
-        "name": "snet-a"
+        "name": "snet-a",
+        "networkSecurityGroup": {
+          "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-net/providers/Microsoft.Network/networkSecurityGroups/nsg-web"
+        }
       },
       {
         "addressPrefix": "10.0.1.0/24",
         "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-net/providers/Microsoft.Network/virtualNetworks/vnet-hub/subnets/snet-b",
-        "name": "snet-b"
+        "name": "snet-b",
+        "delegations": [
+          {
+            "serviceName": "Microsoft.Web/serverFarms"
+          }
+        ]
+      },
+      {
+        "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-net/providers/Microsoft.Network/virtualNetworks/vnet-hub/subnets/AzureBastionSubnet",
+        "name": "AzureBastionSubnet",
+        "addressPrefix": "10.0.9.0/26"
       }
     ]
   }

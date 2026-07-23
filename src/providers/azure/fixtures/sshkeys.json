@@ -1,0 +1,16 @@
+[
+  {
+    "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-app/providers/Microsoft.Compute/sshPublicKeys/key-admin",
+    "location": "westeurope",
+    "name": "key-admin",
+    "publicKey": "ssh-rsa AAAAB3NzaC1yc2EAAADAQABAAABgQCadmin generated-by-azure",
+    "resourceGroup": "rg-app"
+  },
+  {
+    "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-app/providers/Microsoft.Compute/sshPublicKeys/key-orphan",
+    "location": "westeurope",
+    "name": "key-orphan",
+    "publicKey": "ssh-rsa AAAAB3NzaC1yc2EAAADAQABAAABgQCorphan legacy",
+    "resourceGroup": "rg-app"
+  }
+]

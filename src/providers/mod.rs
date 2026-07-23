@@ -5,7 +5,9 @@
 pub mod azure;
 pub mod demo;
 
-use crate::model::{ProviderError, ProviderInfo, ProviderStatus, ScopeOption, Topology};
+use crate::model::{
+    CostPeriod, ProviderError, ProviderInfo, ProviderStatus, ScopeOption, Topology,
+};
 use std::sync::Arc;
 
 pub trait CloudProvider: Send + Sync {
@@ -17,9 +19,14 @@ pub trait CloudProvider: Send + Sync {
     /// Selectable fetch scopes: Azure subscriptions, AWS account/region pairs…
     fn list_scopes(&self) -> Result<Vec<ScopeOption>, ProviderError>;
 
-    /// Fetch the inventory for a scope and normalize it into a Topology.
-    /// Blocking — the app calls this from a worker thread.
-    fn fetch_topology(&self, scope_id: Option<&str>) -> Result<Topology, ProviderError>;
+    /// Fetch the inventory for a scope and normalize it into a Topology,
+    /// with per-resource costs covering `period`. Blocking — the app calls
+    /// this from a worker thread.
+    fn fetch_topology(
+        &self,
+        scope_id: Option<&str>,
+        period: CostPeriod,
+    ) -> Result<Topology, ProviderError>;
 }
 
 /// The built-in providers. New clouds get one line here.

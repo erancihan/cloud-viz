@@ -1,0 +1,8 @@
+[
+  {
+    "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-app/providers/Microsoft.Compute/snapshots/snap-data",
+    "creationData": {
+      "sourceResourceId": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-app/providers/Microsoft.Compute/disks/DataDisk_1"
+    }
+  }
+]

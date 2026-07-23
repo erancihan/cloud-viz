@@ -1,0 +1,10 @@
+[
+  {
+    "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-data/providers/Microsoft.Network/privateEndpoints/pe-blob",
+    "privateLinkServiceConnections": [
+      {
+        "privateLinkServiceId": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-orphan/providers/Microsoft.Storage/storageAccounts/ststray"
+      }
+    ]
+  }
+]

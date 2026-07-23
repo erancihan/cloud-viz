@@ -1,7 +1,11 @@
-//! Deterministic nested layout with deliberately relaxed spacing: leaves are
-//! fixed-size cards, containers pack their children onto shelves (rows)
-//! aiming at a roughly square footprint, and grow to fit. Positions are
-//! absolute world coordinates, ready for painting.
+//! Deterministic layout with deliberately relaxed spacing. Containers (vnets,
+//! subnets) pack their children onto shelves (rows) aiming at a roughly square
+//! footprint and grow to fit; the top level shelf-packs the same way, in a
+//! fixed canonical order — virtual networks lead, then the other containers
+//! by size, then leaf cards grouped by category. Every sort key comes from
+//! node content (kind, category, name, id), never from listing order, so a
+//! refetch that returns the same resources shuffled yields the exact same
+//! picture. Positions are absolute world coordinates, ready for painting.
 //!
 //! No GUI types here — the module is unit-testable headlessly and shared by
 //! the egui canvas and the SVG exporter.
@@ -12,13 +16,43 @@ use std::collections::{HashMap, HashSet};
 // Spacing constants. Generous on purpose: cards and containers get room to
 // breathe so relationship edges route loosely instead of hugging the nodes.
 pub const LEAF_W: f32 = 240.0;
-pub const LEAF_H: f32 = 68.0;
+/// Height of a card's head (name / kind / group lines). Cards with
+/// attachments grow below this by one `ATTACH_ROW` per visible row.
+pub const LEAF_H: f32 = 76.0;
+/// Pitch of one attachment row.
+pub const ATTACH_ROW: f32 = 21.0;
+pub const ATTACH_PAD: f32 = 7.0;
+/// Extra space for the separator between plain and shared attachment rows.
+pub const ATTACH_SPLIT: f32 = 9.0;
 pub const GAP: f32 = 36.0;
 pub const PAD: f32 = 28.0;
 pub const HEADER: f32 = 52.0;
-pub const ROOT_GAP: f32 = 120.0;
 const EMPTY_W: f32 = 280.0;
 const EMPTY_H: f32 = 116.0;
+
+/// Index of the first secondary attachment (SSH keys, public IPs) when the
+/// card needs a separator between the hardware rows and the secondary rows
+/// below them (attachments are ordered secondary-last by the mappers).
+/// `None` when either group is empty.
+pub fn secondary_split_index(attachments: &[crate::model::Attachment]) -> Option<usize> {
+    let first = attachments.iter().position(|a| a.secondary())?;
+    (first > 0).then_some(first)
+}
+
+/// Leaf card height: the fixed head plus one row per attachment (all of
+/// them — no cap), plus the group separator when both groups are present.
+pub fn leaf_height(node: &TopologyNode) -> f32 {
+    let n = node.attachments.len();
+    if n == 0 {
+        return LEAF_H;
+    }
+    let split = if secondary_split_index(&node.attachments).is_some() {
+        ATTACH_SPLIT
+    } else {
+        0.0
+    };
+    LEAF_H + ATTACH_PAD * 2.0 + n as f32 * ATTACH_ROW + split
+}
 /// Wider-than-tall packing bias — screens are landscape.
 const ASPECT_BIAS: f32 = 2.1;
 
@@ -121,7 +155,8 @@ pub fn layout_topology(topology: &Topology) -> Layout {
     }
 
     // Stable child ordering: containers first (largest subtree first), then
-    // leaves grouped by category in fixed slot order, then by name.
+    // leaves grouped by category in fixed slot order, then by name, with the
+    // unique id as the final tiebreak so duplicate names can't reorder.
     let sort_children = |list: &mut Vec<usize>| {
         list.sort_by(|&a, &b| {
             let na = &nodes[a];
@@ -141,6 +176,7 @@ pub fn layout_topology(topology: &Topology) -> Layout {
                     }
                 })
                 .then_with(|| na.name.cmp(&nb.name))
+                .then_with(|| na.id.cmp(&nb.id))
         });
     };
 
@@ -157,7 +193,7 @@ pub fn layout_topology(topology: &Topology) -> Layout {
                 let (w, h) = if node.container {
                     (EMPTY_W, EMPTY_H)
                 } else {
-                    (LEAF_W, LEAF_H)
+                    (LEAF_W, leaf_height(node))
                 };
                 Measured {
                     node_index: i,
@@ -187,11 +223,39 @@ pub fn layout_topology(topology: &Topology) -> Layout {
         }
     }
 
+    // Canonical top-level order: virtual networks lead (the network fabric on
+    // one band), then the remaining containers by descending subtree size,
+    // then leaf cards grouped by category, name, id. Content-derived keys
+    // only — listing order can never move anything.
+    roots.sort_by(|&a, &b| {
+        let (na, nb) = (&nodes[a], &nodes[b]);
+        let vnet = |n: &TopologyNode| {
+            n.kind
+                .eq_ignore_ascii_case("microsoft.network/virtualnetworks")
+        };
+        let cont = |i: usize| nodes[i].container || children_of.contains_key(nodes[i].id.as_str());
+        vnet(nb)
+            .cmp(&vnet(na))
+            .then_with(|| cont(b).cmp(&cont(a)))
+            .then_with(|| {
+                if cont(a) && cont(b) {
+                    subtree_size(b, nodes, &children_of).cmp(&subtree_size(a, nodes, &children_of))
+                } else {
+                    na.category.sort_rank().cmp(&nb.category.sort_rank())
+                }
+            })
+            .then_with(|| na.name.cmp(&nb.name))
+            .then_with(|| na.id.cmp(&nb.id))
+    });
+
     let root_boxes: Vec<Measured> = roots
         .iter()
         .map(|&r| measure(r, nodes, &children_of, &sort_children))
         .collect();
-    let (placed_roots, _, _) = shelf_pack(root_boxes, ROOT_GAP);
+    // The top level shelf-packs like containers do: ordered rows instead of
+    // a force-directed blob — rectangular, scannable, and immune to float
+    // summation order.
+    let (placed_roots, _, _) = shelf_pack(root_boxes, GAP);
 
     // Flatten depth-first so parents always precede their children.
     let mut placed: Vec<PlacedNode> = Vec::with_capacity(nodes.len());
@@ -348,6 +412,72 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn layout_is_stable_under_input_reordering() {
+        // The user-visible guarantee of the shelf layout: `az` returning the
+        // same resources in a different order must not move a single node.
+        let topo = demo_topology();
+        let mut shuffled = topo.clone();
+        shuffled.nodes.reverse();
+        shuffled.edges.reverse();
+        let (a, b) = (layout_topology(&topo), layout_topology(&shuffled));
+        for p in &a.placed {
+            let id = &topo.nodes[p.index].id;
+            let q = &b.placed[b.by_id[id]];
+            assert_eq!(p.rect, q.rect, "{id} moved after input reorder");
+        }
+    }
+
+    #[test]
+    fn virtual_networks_lead_on_a_shared_top_row() {
+        // Vnets sort first at the top level, so they share the first shelf:
+        // same top edge, leftmost band of the diagram.
+        let topo = demo_topology();
+        let layout = layout_topology(&topo);
+        let vnets: Vec<&PlacedNode> = layout
+            .placed
+            .iter()
+            .filter(|p| topo.nodes[p.index].kind == "Microsoft.Network/virtualNetworks")
+            .collect();
+        assert!(vnets.len() >= 2, "demo should have multiple vnets");
+        let min_y = layout
+            .placed
+            .iter()
+            .map(|p| p.rect.y)
+            .fold(f32::INFINITY, f32::min);
+        for v in &vnets {
+            assert!(
+                (v.rect.y - min_y).abs() < 0.001,
+                "{} not on the top shelf",
+                topo.nodes[v.index].name
+            );
+        }
+    }
+
+    #[test]
+    fn cards_grow_to_fit_attachment_rows() {
+        let topo = demo_topology();
+        let layout = layout_topology(&topo);
+        for p in &layout.placed {
+            if !p.is_container {
+                let node = &topo.nodes[p.index];
+                assert!(
+                    (p.rect.h - leaf_height(node)).abs() < 0.001,
+                    "{} has wrong card height",
+                    node.name
+                );
+            }
+        }
+        // vm-web-01 carries attachments, so its card is taller than the head.
+        let vm = topo
+            .nodes
+            .iter()
+            .position(|n| n.name == "vm-web-01")
+            .unwrap();
+        let placed = layout.placed.iter().find(|p| p.index == vm).unwrap();
+        assert!(placed.rect.h > LEAF_H);
     }
 
     #[test]
