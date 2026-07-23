@@ -247,6 +247,17 @@ pub fn draw_attachment(painter: &Painter, rect: Rect, kind: &str, color: Color32
             painter.add(line(&[(10.8, 8.0), (10.8, 10.6)]));
             painter.add(line(&[(13.4, 8.0), (13.4, 10.6)]));
         }
+        // Heartbeat trace for boot-diagnostics reference rows.
+        "diagnostics" => {
+            painter.add(line(&[
+                (2.5, 8.0),
+                (5.0, 8.0),
+                (6.5, 4.5),
+                (9.0, 11.5),
+                (10.5, 8.0),
+                (13.5, 8.0),
+            ]));
+        }
         // Safe with a dial for Recovery Services vaults.
         "backup vault" => {
             painter.add(closed(&[

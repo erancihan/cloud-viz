@@ -118,12 +118,20 @@ pub fn to_svg(topology: &Topology, theme: &Theme) -> String {
                 placed.child_count
             );
         } else {
+            // Mirrors the canvas: a delegated-but-empty subnet says so.
+            let label = node
+                .metadata
+                .iter()
+                .find(|(k, _)| k == "delegatedTo")
+                .map(|(_, v)| format!("Delegated to {}", v.replace("Microsoft.", "")))
+                .unwrap_or_else(|| "No resources".into());
             let _ = write!(
                 svg,
-                r#"<text x="{:.1}" y="{:.1}" font-size="11.5" fill="{}">No resources</text>"#,
+                r#"<text x="{:.1}" y="{:.1}" font-size="11.5" fill="{}">{}</text>"#,
                 r.x + 18.0,
                 r.y + 46.0,
-                theme.ink_3.hex()
+                theme.ink_3.hex(),
+                escape(&label)
             );
         }
     }
@@ -346,6 +354,7 @@ pub fn to_svg(topology: &Topology, theme: &Theme) -> String {
                     "restore point" | "snapshot" | "backup vault" => {
                         theme.category_color(ResourceCategory::Compute)
                     }
+                    "diagnostics" => theme.category_color(ResourceCategory::Storage),
                     _ => theme.ink_3,
                 };
                 // 16-grid glyph scaled to 11px, centered on (x=27, cy).
@@ -444,6 +453,9 @@ fn attachment_glyph_svg(kind: &str, color: Rgb) -> String {
             r#"<path d="M7.2 8h6.2M10.8 8v2.6M13.4 8v2.6"/>"#
         )
         .to_string(),
+        "diagnostics" => {
+            r#"<path d="M2.5 8h2.5L6.5 4.5 9 11.5 10.5 8h3"/>"#.to_string()
+        }
         "backup vault" => concat!(
             r#"<rect x="3" y="3" width="10" height="9" rx="1"/>"#,
             r#"<circle cx="8" cy="7.5" r="2.2"/>"#,
@@ -574,5 +586,11 @@ mod tests {
         assert_eq!(svg.matches(">$21.18<").count(), 2, "networking box");
         // A card or box without cost data shows no zero badge.
         assert!(!svg.contains(">$0.00<"));
+        // A delegated-but-empty subnet explains itself instead of reading
+        // "No resources".
+        assert!(
+            svg.contains("Delegated to Web/serverFarms"),
+            "empty delegated subnet label missing"
+        );
     }
 }

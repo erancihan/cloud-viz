@@ -110,10 +110,21 @@ pub fn demo_topology() -> Topology {
     ];
 
     // Subnets — containers nested in the vnet, holding their members.
-    for (id, name, prefix) in [
-        (&snet_web, "snet-web", "10.0.0.0/24"),
-        (&snet_data, "snet-data", "10.0.2.0/24"),
+    // snet-data is delegated (its Postgres lives there); snet-int is a
+    // delegated-but-empty subnet, the App Service vnet-integration shape.
+    for (id, name, prefix, delegated) in [
+        (&snet_web, "snet-web", "10.0.0.0/24", None),
+        (
+            &snet_data,
+            "snet-data",
+            "10.0.2.0/24",
+            Some("Microsoft.DBforPostgreSQL/flexibleServers"),
+        ),
     ] {
+        let mut metadata = vec![("addressPrefix", prefix)];
+        if let Some(service) = delegated {
+            metadata.push(("delegatedTo", service));
+        }
         defs.push(Def {
             id: id.clone(),
             name,
@@ -123,9 +134,24 @@ pub fn demo_topology() -> Topology {
             parent: Some(vnet.clone()),
             container: true,
             group: None,
-            metadata: vec![("addressPrefix", prefix)],
+            metadata,
         });
     }
+    let snet_int = format!("{vnet}/snet-int");
+    defs.push(Def {
+        id: snet_int,
+        name: "snet-int",
+        kind: "Microsoft.Network/virtualNetworks/subnets",
+        kind_label: "Subnet",
+        category: Network,
+        parent: Some(vnet.clone()),
+        container: true,
+        group: None,
+        metadata: vec![
+            ("addressPrefix", "10.0.3.0/26"),
+            ("delegatedTo", "Microsoft.Web/serverFarms"),
+        ],
+    });
 
     // Subnet members: VMs render inside the subnet their NIC lives in (the
     // NIC itself rides on the VM's card, mirroring the Azure mapper).
@@ -534,6 +560,8 @@ pub fn demo_topology() -> Topology {
         "vm-web-02",
         &[
             ("nic", "nic-web-02", false, None),
+            // Reference row: the storage account keeps its own card.
+            ("diagnostics", "stcontosoprod", false, None),
             ("nsg", "nsg-web", true, None),
             ("ssh key", "ssh-admin", true, None),
         ],

@@ -153,6 +153,7 @@ impl Attachment {
                 | "snapshot"
                 | "private endpoint"
                 | "backup vault"
+                | "diagnostics"
         )
     }
 }
@@ -337,6 +338,15 @@ fn leaf_block(
         if att.kind == "backup vault" {
             notes.push(format!(
                 "backup vault {} backs up this resource — disable its protection before deleting",
+                att.name
+            ));
+            continue;
+        }
+        // Diagnostics rows are references, not folds — the storage account
+        // is a first-class resource with its own card and other data.
+        if att.kind == "diagnostics" {
+            notes.push(format!(
+                "storage account {} holds this resource's boot diagnostics — left in place",
                 att.name
             ));
             continue;
@@ -1149,13 +1159,23 @@ mod tests {
         // vault as card cleanup would be wrong — and an inbound "attached"
         // edge from a VM must never drag the VM into the plan.
         let mut disk = arm_leaf("disk-a", "Managed disk");
-        disk.attachments = vec![Attachment {
-            kind: "backup vault".into(),
-            name: "rsv-a".into(),
-            id: Some("/subscriptions/s/rsv-a".into()),
-            shared: false,
-            cost: None,
-        }];
+        disk.attachments = vec![
+            Attachment {
+                kind: "backup vault".into(),
+                name: "rsv-a".into(),
+                id: Some("/subscriptions/s/rsv-a".into()),
+                shared: false,
+                cost: None,
+            },
+            // Diagnostics rows are references — never a delete step either.
+            Attachment {
+                kind: "diagnostics".into(),
+                name: "stdiag".into(),
+                id: Some("/subscriptions/s/stdiag".into()),
+                shared: false,
+                cost: None,
+            },
+        ];
         let t = t_with(
             vec![disk, arm_leaf("vm-a", "Virtual machine")],
             vec![(
@@ -1167,10 +1187,11 @@ mod tests {
         let plan = delete_plan(&t, 0).unwrap();
         assert_eq!(plan.steps.len(), 1);
         assert_eq!(plan.steps[0].label, "Managed disk disk-a");
-        assert_eq!(plan.notes.len(), 1);
+        assert_eq!(plan.notes.len(), 2);
         assert!(
             plan.notes[0].contains("rsv-a") && plan.notes[0].contains("disable its protection")
         );
+        assert!(plan.notes[1].contains("stdiag") && plan.notes[1].contains("left in place"));
     }
 
     #[test]
