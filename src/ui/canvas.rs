@@ -596,7 +596,7 @@ fn draw_card(
                     c32(theme.category_color(ResourceCategory::Network))
                 }
                 "ssh key" | "nsg" => c32(theme.category_color(ResourceCategory::Security)),
-                "restore point" | "snapshot" => {
+                "restore point" | "snapshot" | "backup vault" => {
                     c32(theme.category_color(ResourceCategory::Compute))
                 }
                 _ => c32(theme.ink_3),

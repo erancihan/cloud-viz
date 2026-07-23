@@ -343,7 +343,9 @@ pub fn to_svg(topology: &Topology, theme: &Theme) -> String {
                         theme.category_color(ResourceCategory::Network)
                     }
                     "ssh key" | "nsg" => theme.category_color(ResourceCategory::Security),
-                    "restore point" | "snapshot" => theme.category_color(ResourceCategory::Compute),
+                    "restore point" | "snapshot" | "backup vault" => {
+                        theme.category_color(ResourceCategory::Compute)
+                    }
                     _ => theme.ink_3,
                 };
                 // 16-grid glyph scaled to 11px, centered on (x=27, cy).
@@ -440,6 +442,12 @@ fn attachment_glyph_svg(kind: &str, color: Rgb) -> String {
         "ssh key" => concat!(
             r#"<circle cx="4.8" cy="8" r="2.4"/>"#,
             r#"<path d="M7.2 8h6.2M10.8 8v2.6M13.4 8v2.6"/>"#
+        )
+        .to_string(),
+        "backup vault" => concat!(
+            r#"<rect x="3" y="3" width="10" height="9" rx="1"/>"#,
+            r#"<circle cx="8" cy="7.5" r="2.2"/>"#,
+            r#"<path d="M4.8 12v1.6M11.2 12v1.6"/>"#
         )
         .to_string(),
         "snapshot" => concat!(

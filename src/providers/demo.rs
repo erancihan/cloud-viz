@@ -471,17 +471,8 @@ pub fn demo_topology() -> Topology {
             Containers,
             vec![],
         ),
-        // The vault backing up a VM — its "backs up" edge keeps it free.
-        // (snap-decom and pep-blob fold onto cards below, like the Azure
-        // mapper folds snapshots and private endpoints.)
-        leaf(
-            "rg-ops",
-            "rsv-backup",
-            "Microsoft.RecoveryServices/vaults",
-            "Recovery Services vault",
-            Other,
-            vec![],
-        ),
+        // (snap-decom, pep-blob, and rsv-backup fold onto cards below, like
+        // the Azure mapper folds snapshots, private endpoints, and vaults.)
     ]);
 
     let mut nodes: Vec<TopologyNode> = defs
@@ -533,6 +524,7 @@ pub fn demo_topology() -> Topology {
             ("disk", "disk-web-01-data", false, Some(3.20)),
             ("extension", "AADSSHLoginForLinux", false, None),
             ("nic", "nic-web-01", false, None),
+            ("backup vault", "rsv-backup", false, None),
             ("nsg", "nsg-web", true, None),
             ("restore point", "rpc-vm-web-01", false, None),
             ("ssh key", "ssh-admin", true, None),
@@ -586,27 +578,18 @@ pub fn demo_topology() -> Topology {
         ("pip-reserved", 2.92),
         ("func-events", 3.10),
         ("pg-flex-main", 42.00),
-        ("rsv-backup", 6.25),
     ] {
         set_cost(name, cost);
     }
 
     // Only dependency edges remain; subnet, vnet, and plan membership is
     // shown by containment, and NICs/disks/extensions/slots by attachments.
-    let edge_defs: Vec<(String, String, EdgeKind, &str)> = vec![
-        (
-            id("rg-data", "sqldb-orders"),
-            id("rg-data", "sqlsrv-main"),
-            EdgeKind::Association,
-            "on server",
-        ),
-        (
-            id("rg-ops", "rsv-backup"),
-            id("rg-app", "vm-web-01"),
-            EdgeKind::Association,
-            "backs up",
-        ),
-    ];
+    let edge_defs: Vec<(String, String, EdgeKind, &str)> = vec![(
+        id("rg-data", "sqldb-orders"),
+        id("rg-data", "sqlsrv-main"),
+        EdgeKind::Association,
+        "on server",
+    )];
 
     let edges = edge_defs
         .into_iter()
@@ -701,9 +684,9 @@ mod tests {
         for vm in ["vm-web-01", "vm-web-02"] {
             assert_eq!(by_name(vm).parent_id.as_deref(), Some(snet_web.id.as_str()));
         }
-        // NIC/disk/extension/NSG/restore point/ssh key ride on the VM card.
+        // NIC/disk/extension/vault/NSG/restore point/ssh key ride on the card.
         assert!(!t.nodes.iter().any(|n| n.name.starts_with("nic-web")));
-        assert_eq!(by_name("vm-web-01").attachments.len(), 6);
+        assert_eq!(by_name("vm-web-01").attachments.len(), 7);
         // The shared SSH key is flagged on both VMs and has no node; the
         // unused key keeps its standalone card.
         for vm in ["vm-web-01", "vm-web-02"] {

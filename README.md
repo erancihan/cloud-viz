@@ -59,10 +59,12 @@ cargo run -- --export-svg topo.svg --provider azure      # your live estate
   collection's `source.id`, read per-RG), snapshots (onto their source
   disk's card, re-anchored to the VM when the disk is folded), private
   endpoints (onto the service they front, via the private-link
-  connection), and — generically — any child resource whose parent is on
-  the canvas (VM extensions, deployment slots, CDN endpoints, email
-  domains, private DNS zone links…) render as icon rows on the owner's
-  card, with the full list also in the details panel.
+  connection), Recovery Services vaults (onto everything they back up,
+  from the per-vault item listing), and — generically — any child
+  resource whose parent is on the canvas (VM extensions, deployment
+  slots, CDN endpoints, email domains, private DNS zone links…) render as
+  icon rows on the owner's card, with the full list also in the details
+  panel.
   Hardware rows come first; security / reachability / backups sit below
   their own separator, colored by category, with a link icon when shared
   across nodes. Unused keys, unattached disks and IPs, container
@@ -75,8 +77,8 @@ cargo run -- --export-svg topo.svg --provider azure      # your live estate
   Storage, Security…) — all styled like a virtual network so nothing
   loiters. A single association keeps a card free. Cost rows for resources
   deleted during the billing period surface as a warning instead of
-  vanishing silently. Remaining relationships (vault → VM, VM →
-  diagnostics storage, database → server, …) route as relaxed beziers.
+  vanishing silently. Remaining relationships (VM → diagnostics storage,
+  database → server, …) route as relaxed beziers.
 - Nests services into the subnet they live in even without a NIC: Bastion
   hosts (their AzureBastionSubnet), vnet-integrated PostgreSQL flexible
   servers (their delegated subnet), standalone VM scale sets — and function

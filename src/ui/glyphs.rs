@@ -247,6 +247,18 @@ pub fn draw_attachment(painter: &Painter, rect: Rect, kind: &str, color: Color32
             painter.add(line(&[(10.8, 8.0), (10.8, 10.6)]));
             painter.add(line(&[(13.4, 8.0), (13.4, 10.6)]));
         }
+        // Safe with a dial for Recovery Services vaults.
+        "backup vault" => {
+            painter.add(closed(&[
+                (3.0, 3.0),
+                (13.0, 3.0),
+                (13.0, 12.0),
+                (3.0, 12.0),
+            ]));
+            painter.add(Shape::circle_stroke(p(8.0, 7.5), 2.2 * s, stroke));
+            painter.add(line(&[(4.8, 12.0), (4.8, 13.6)]));
+            painter.add(line(&[(11.2, 12.0), (11.2, 13.6)]));
+        }
         // Camera for snapshots (a picture of a disk at a moment).
         "snapshot" => {
             painter.add(closed(&[
