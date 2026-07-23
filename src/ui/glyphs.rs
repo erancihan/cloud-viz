@@ -247,6 +247,17 @@ pub fn draw_attachment(painter: &Painter, rect: Rect, kind: &str, color: Color32
             painter.add(line(&[(10.8, 8.0), (10.8, 10.6)]));
             painter.add(line(&[(13.4, 8.0), (13.4, 10.6)]));
         }
+        // Shield for network security groups.
+        "nsg" => {
+            painter.add(closed(&[
+                (8.0, 2.6),
+                (13.0, 4.6),
+                (12.4, 9.4),
+                (8.0, 13.4),
+                (3.6, 9.4),
+                (3.0, 4.6),
+            ]));
+        }
         // Two stacked layers for deployment slots.
         "slot" => {
             painter.add(closed(&[

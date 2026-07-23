@@ -340,7 +340,7 @@ pub fn to_svg(topology: &Topology, theme: &Theme) -> String {
                 // muted.
                 let icon_color = match att.kind.as_str() {
                     "public ip" => theme.category_color(ResourceCategory::Network),
-                    "ssh key" => theme.category_color(ResourceCategory::Security),
+                    "ssh key" | "nsg" => theme.category_color(ResourceCategory::Security),
                     "restore point" => theme.category_color(ResourceCategory::Compute),
                     _ => theme.ink_3,
                 };
@@ -440,6 +440,9 @@ fn attachment_glyph_svg(kind: &str, color: Rgb) -> String {
             r#"<path d="M7.2 8h6.2M10.8 8v2.6M13.4 8v2.6"/>"#
         )
         .to_string(),
+        "nsg" => {
+            r#"<path d="M8 2.6 13 4.6 12.4 9.4 8 13.4 3.6 9.4 3 4.6Z"/>"#.to_string()
+        }
         "slot" => concat!(
             r#"<rect x="3" y="3" width="7.4" height="7.4" rx="1"/>"#,
             r#"<rect x="5.6" y="5.6" width="7.4" height="7.4" rx="1"/>"#
@@ -545,6 +548,10 @@ mod tests {
         assert_eq!(svg.matches(">$42.00<").count(), 2, "data subnet rollup");
         assert_eq!(svg.matches(">$5.63<").count(), 2, "detached disk box");
         assert_eq!(svg.matches(">$7.75<").count(), 2, "monitoring box");
+        // The category sweep's standalone boxes roll up too: Databases =
+        // cosmos 31.07 + redis 15.23.
+        assert!(svg.contains(">$46.30<"), "databases box rollup missing");
+        assert_eq!(svg.matches(">$21.18<").count(), 2, "networking box");
         // A card or box without cost data shows no zero badge.
         assert!(!svg.contains(">$0.00<"));
     }

@@ -53,22 +53,27 @@ cargo run -- --export-svg topo.svg --provider azure      # your live estate
   is already in the toolbar).
 - Folds subsidiary resources into their owner's card instead of drawing
   them as nodes: attached managed disks (via ARM's `managedBy`), NICs,
-  public IPs, SSH keys, VM restore point collections (via each collection's
-  `source.id`, read per-RG), and — generically — any child resource whose
-  parent is on the canvas (VM extensions, deployment slots, CDN endpoints,
-  email domains, private DNS zone links…) render as icon rows on the
-  owner's card, with the full list also in the details panel. Hardware rows
-  come first; credentials / reachability / backups sit below their own
-  separator, colored by category, with a link icon when shared across nodes
-  (an SSH key on several VMs). Unused keys, unattached disks and IPs,
-  container registries, edge-less NSGs, and unwired container instances
-  stay visible in dashed "Detached …" boxes (an NSG that protects
-  something stays free next to it); regional services (network watchers)
-  group under a "Regional" box; monitoring debris (alert rules, action
-  groups, dashboards, App Insights, Log Analytics workspaces) gathers into
-  a "Monitoring" box — all styled like a virtual network so they don't
-  scatter. Remaining relationships (NSG → subnet/VM, snapshot →
-  disk, vault → VM, VM → diagnostics storage, …) route as relaxed beziers.
+  public IPs, SSH keys, NSGs (onto every card they protect — nic-level
+  refs plus subnet-level refs applied to each member, shared-flagged like
+  a key on several VMs), VM restore point collections (via each
+  collection's `source.id`, read per-RG), and — generically — any child
+  resource whose parent is on the canvas (VM extensions, deployment slots,
+  CDN endpoints, email domains, private DNS zone links…) render as icon
+  rows on the owner's card, with the full list also in the details panel.
+  Hardware rows come first; security / reachability / backups sit below
+  their own separator, colored by category, with a link icon when shared
+  across nodes. Unused keys, unattached disks and IPs, container
+  registries, fully detached NSGs, and unwired container instances stay
+  visible in dashed "Detached …" boxes; regional services (network
+  watchers) group under a "Regional" box; monitoring debris (alert rules,
+  action groups, dashboards, App Insights, Log Analytics workspaces)
+  gathers into a "Monitoring" box; and whatever is still top-level with no
+  edges at all parks in a per-category "Standalone" box (Databases,
+  Storage, Security…) — all styled like a virtual network so nothing
+  loiters. A single association keeps a card free. Cost rows for resources
+  deleted during the billing period surface as a warning instead of
+  vanishing silently. Remaining relationships (snapshot → disk, vault →
+  VM, VM → diagnostics storage, …) route as relaxed beziers.
 - Nests services into the subnet they live in even without a NIC: Bastion
   hosts (their AzureBastionSubnet), vnet-integrated PostgreSQL flexible
   servers (their delegated subnet), standalone VM scale sets — and function

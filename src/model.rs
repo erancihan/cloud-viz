@@ -146,7 +146,7 @@ impl Attachment {
     pub fn secondary(&self) -> bool {
         matches!(
             self.kind.as_str(),
-            "ssh key" | "public ip" | "restore point"
+            "ssh key" | "public ip" | "restore point" | "nsg"
         )
     }
 }
@@ -185,6 +185,8 @@ fn delete_rank(kind: &str) -> Option<u8> {
         "disk" => Some(4),
         // Independent credential resources — pure cleanup, last.
         "ssh key" => Some(5),
+        // An NSG is freed once the resources it protected are gone.
+        "nsg" => Some(6),
         _ => None,
     }
 }
@@ -689,6 +691,48 @@ pub fn group_detached(topology: &mut Topology) {
         ResourceCategory::Other,
         "Management",
     );
+
+    // Final sweep: anything still top-level, unwired (no edges), and not a
+    // container gathers into a per-category "Standalone" box — the estate's
+    // parked services (databases, storage accounts, key vaults, scale
+    // sets…). A single edge keeps a card free: it has somewhere to be near.
+    const SWEEP: &[ResourceCategory] = &[
+        ResourceCategory::Compute,
+        ResourceCategory::Network,
+        ResourceCategory::Storage,
+        ResourceCategory::Database,
+        ResourceCategory::Containers,
+        ResourceCategory::Security,
+        ResourceCategory::Integration,
+        ResourceCategory::Web,
+        ResourceCategory::Other,
+    ];
+    for category in SWEEP {
+        let members: Vec<usize> = topology
+            .nodes
+            .iter()
+            .enumerate()
+            .filter(|(_, n)| {
+                n.parent_id.is_none()
+                    && !n.container
+                    && n.category == *category
+                    && !connected.contains(&n.id)
+            })
+            .map(|(i, _)| i)
+            .collect();
+        let id = format!(
+            "cloudviz:group:category-{}",
+            category.label().to_lowercase().replace([' ', '&'], "-")
+        );
+        gather_into_box(
+            topology,
+            members,
+            id,
+            category.label(),
+            *category,
+            "Standalone",
+        );
+    }
 }
 
 /// Parent the given nodes under a new synthetic dashed box (no-op when there
@@ -872,13 +916,15 @@ mod tests {
         };
         group_detached(&mut t);
 
-        // Two containers appear (keys + disks), none for public IPs or VMs.
+        // Three containers: keys + disks by kind, and the category sweep
+        // parks the unwired VM in an "Other" standalone box (`leaf` builds
+        // Other-category nodes). No public-IP box — no members.
         let groups: Vec<&TopologyNode> = t
             .nodes
             .iter()
             .filter(|n| n.kind == "cloudviz/detachedGroup")
             .collect();
-        assert_eq!(groups.len(), 2);
+        assert_eq!(groups.len(), 3);
         assert!(groups.iter().all(|g| g.container));
 
         let by_name = |name: &str| t.nodes.iter().find(|n| n.name == name).unwrap();
@@ -895,8 +941,11 @@ mod tests {
             by_name("disk-a").parent_id.as_deref(),
             Some(disk_group.id.as_str())
         );
-        // Unrelated leaves stay top-level.
-        assert_eq!(by_name("vm-a").parent_id, None);
+        // The unwired leftover lands in the category sweep box.
+        assert_eq!(
+            by_name("vm-a").parent_id.as_deref(),
+            Some("cloudviz:group:category-other")
+        );
     }
 
     #[test]
