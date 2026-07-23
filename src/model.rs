@@ -146,7 +146,7 @@ impl Attachment {
     pub fn secondary(&self) -> bool {
         matches!(
             self.kind.as_str(),
-            "ssh key" | "public ip" | "restore point" | "nsg"
+            "ssh key" | "public ip" | "restore point" | "nsg" | "snapshot" | "private endpoint"
         )
     }
 }
@@ -176,8 +176,9 @@ pub struct DeletePlan {
 /// and must not get their own command.
 fn delete_rank(kind: &str) -> Option<u8> {
     match kind {
-        // Backups referencing the resource go first, so nothing dangles.
-        "restore point" => Some(0),
+        // Backups and dependents referencing the resource go first, so
+        // nothing dangles.
+        "restore point" | "snapshot" | "private endpoint" => Some(0),
         // 1 is the resource itself: its deletion detaches NICs and disks.
         "nic" => Some(2),
         // A public IP can only be deleted once the NIC holding it is gone.
@@ -191,38 +192,28 @@ fn delete_rank(kind: &str) -> Option<u8> {
     }
 }
 
-/// Edge labels whose SOURCE exists purely for the sake of the TARGET, with
-/// the step rank the pulled-in dependent gets when its only connection is
-/// the resource being deleted. Deliberately excludes "manages"/"attached"
-/// (deleting a disk must never pull in its VM), "backs up" (a vault is heavy
-/// and multi-tenant — it becomes a note instead), and "boot diagnostics"
-/// (the storage account holds unrelated data).
-const PULL_IN: &[(&str, u8)] = &[("protects", 6), ("snapshot of", 0)];
-
 /// Prebuilt lookups shared by every block of one delete plan.
 struct PlanCtx<'a> {
     topology: &'a Topology,
     by_id: HashMap<&'a str, usize>,
     children: HashMap<&'a str, Vec<usize>>,
-    /// Edge count per node id — a dependent with degree 1 exists only for
-    /// the resource being deleted and may join its teardown.
-    degree: HashMap<&'a str, usize>,
 }
 
 fn az_delete(id: &str) -> String {
     format!("az resource delete --ids \"{id}\"")
 }
 
-/// Builds the ordered CLI teardown for a node: its folded attachments
-/// (dependents before dependencies — restore points, then the resource,
-/// which frees its NICs and disks, then NICs, then the public IPs those
-/// NICs held, then disks, then SSH keys), plus edge-connected dependents
-/// (an NSG, a snapshot) whose ONLY connection is this resource — anything
-/// with more connections is excluded with a note, like shared attachments.
-/// Virtual networks and subnets get children-first plans; other containers
-/// have nothing directly deletable and return `None`. Commands are Azure
-/// CLI-shaped (the demo estate mimics Azure); when another provider lands,
-/// branch on [`Topology::provider`] here.
+/// Builds the ordered CLI teardown for a node: its folded attachments,
+/// dependents before dependencies — backups and endpoints referencing the
+/// resource (restore points, snapshots, private endpoints), then the
+/// resource itself (which frees its NICs and disks), then NICs, then the
+/// public IPs those NICs held, then disks, then SSH keys, then NSGs. Shared
+/// attachments are excluded with a note, and a vault backing the resource
+/// up becomes a "disable protection first" warning. Virtual networks and
+/// subnets get children-first plans; other containers have nothing directly
+/// deletable and return `None`. Commands are Azure CLI-shaped (the demo
+/// estate mimics Azure); when another provider lands, branch on
+/// [`Topology::provider`] here.
 pub fn delete_plan(topology: &Topology, index: usize) -> Option<DeletePlan> {
     let node = topology.nodes.get(index)?;
     if !node.id.contains("/subscriptions/") {
@@ -237,14 +228,6 @@ pub fn delete_plan(topology: &Topology, index: usize) -> Option<DeletePlan> {
             .map(|(i, n)| (n.id.as_str(), i))
             .collect(),
         children: children_index(topology),
-        degree: {
-            let mut degree: HashMap<&str, usize> = HashMap::new();
-            for edge in &topology.edges {
-                *degree.entry(edge.source.as_str()).or_default() += 1;
-                *degree.entry(edge.target.as_str()).or_default() += 1;
-            }
-            degree
-        },
     };
 
     let mut steps = Vec::new();
@@ -382,42 +365,21 @@ fn leaf_block(
             ));
         }
     }
-    // Edge-connected dependents pointing AT this resource.
+    // A vault backing this resource up must release it before deletion —
+    // dependents themselves live on the card as attachments, so edges only
+    // ever contribute warnings, never extra delete commands.
     for edge in &ctx.topology.edges {
-        if edge.target != node.id {
+        if edge.target != node.id || edge.label.as_deref() != Some("backs up") {
             continue;
         }
-        let label = edge.label.as_deref().unwrap_or("");
         let Some(&src) = ctx.by_id.get(edge.source.as_str()) else {
             continue;
         };
         let dep = &ctx.topology.nodes[src];
-        if let Some(&(_, rank)) = PULL_IN.iter().find(|(l, _)| *l == label) {
-            let degree = ctx.degree.get(dep.id.as_str()).copied().unwrap_or(0);
-            if degree == 1 {
-                if seen.insert(dep.id.clone()) {
-                    ranked.push((
-                        rank,
-                        DeleteStep {
-                            label: format!("{} {}", dep.kind_label, dep.name),
-                            command: az_delete(&dep.id),
-                        },
-                    ));
-                }
-            } else {
-                notes.push(format!(
-                    "{} {} also connects to {} other resource(s) — left in place",
-                    dep.kind_label,
-                    dep.name,
-                    degree.saturating_sub(1)
-                ));
-            }
-        } else if label == "backs up" {
-            notes.push(format!(
-                "{} {} backs up this resource — disable its protection before deleting",
-                dep.kind_label, dep.name
-            ));
-        }
+        notes.push(format!(
+            "{} {} backs up this resource — disable its protection before deleting",
+            dep.kind_label, dep.name
+        ));
     }
     // Stable sort: same-rank entries keep their card order.
     ranked.sort_by_key(|(rank, _)| *rank);
@@ -1191,85 +1153,36 @@ mod tests {
     }
 
     #[test]
-    fn delete_plan_pulls_in_single_connection_dependents_only() {
+    fn delete_plan_edges_only_warn_never_delete() {
+        // Dependents live on cards as attachments now — edges contribute
+        // warnings only: a vault's "backs up" becomes a note, and an
+        // "attached" edge from a VM must never drag the VM into the plan.
         let t = t_with(
             vec![
+                arm_leaf("disk-a", "Managed disk"),
                 arm_leaf("vm-a", "Virtual machine"),
-                arm_leaf("vm-b", "Virtual machine"),
-                arm_leaf("nsg-solo", "Network security group"),
-                arm_leaf("nsg-shared", "Network security group"),
-                arm_leaf("snap-a", "Snapshot"),
                 arm_leaf("rsv-a", "Recovery Services vault"),
             ],
             vec![
                 (
-                    "/subscriptions/s/nsg-solo",
                     "/subscriptions/s/vm-a",
-                    "protects",
-                ),
-                (
-                    "/subscriptions/s/nsg-shared",
-                    "/subscriptions/s/vm-a",
-                    "protects",
-                ),
-                (
-                    "/subscriptions/s/nsg-shared",
-                    "/subscriptions/s/vm-b",
-                    "protects",
-                ),
-                (
-                    "/subscriptions/s/snap-a",
-                    "/subscriptions/s/vm-a",
-                    "snapshot of",
+                    "/subscriptions/s/disk-a",
+                    "attached",
                 ),
                 (
                     "/subscriptions/s/rsv-a",
-                    "/subscriptions/s/vm-a",
+                    "/subscriptions/s/disk-a",
                     "backs up",
                 ),
             ],
         );
         let plan = delete_plan(&t, 0).unwrap();
-        let labels: Vec<&str> = plan.steps.iter().map(|s| s.label.as_str()).collect();
-        // The snapshot (only connection: vm-a) leads; the solo NSG trails;
-        // the shared NSG and the vault never become steps.
-        assert_eq!(
-            labels,
-            vec![
-                "Snapshot snap-a",
-                "Virtual machine vm-a",
-                "Network security group nsg-solo",
-            ]
-        );
-        assert!(plan
-            .notes
-            .iter()
-            .any(|n| n.contains("nsg-shared") && n.contains("left in place")));
-        assert!(plan
-            .notes
-            .iter()
-            .any(|n| n.contains("rsv-a") && n.contains("disable its protection")));
-    }
-
-    #[test]
-    fn delete_plan_never_pulls_in_managers() {
-        // A disk's inbound "attached" edge comes from its VM — deleting the
-        // disk must never drag the VM into the teardown, even at degree 1.
-        let t = t_with(
-            vec![
-                arm_leaf("disk-a", "Managed disk"),
-                arm_leaf("vm-a", "Virtual machine"),
-            ],
-            vec![(
-                "/subscriptions/s/vm-a",
-                "/subscriptions/s/disk-a",
-                "attached",
-            )],
-        );
-        let plan = delete_plan(&t, 0).unwrap();
         assert_eq!(plan.steps.len(), 1);
         assert_eq!(plan.steps[0].label, "Managed disk disk-a");
-        assert!(plan.notes.is_empty());
+        assert_eq!(plan.notes.len(), 1);
+        assert!(
+            plan.notes[0].contains("rsv-a") && plan.notes[0].contains("disable its protection")
+        );
     }
 
     #[test]
@@ -1283,31 +1196,34 @@ mod tests {
         subnet.parent_id = Some("/subscriptions/s/vnet-a".into());
         let mut vm = arm_leaf("vm-a", "Virtual machine");
         vm.parent_id = Some("/subscriptions/s/snet-a".into());
-        vm.attachments = vec![Attachment {
-            kind: "disk".into(),
-            name: "data".into(),
-            id: Some("/subscriptions/s/disk-a".into()),
-            shared: false,
-            cost: None,
-        }];
-        let nsg = arm_leaf("nsg-a", "Network security group");
-        let nodes = vec![vnet, subnet, vm, nsg];
-        let edges = vec![(
-            "/subscriptions/s/nsg-a",
-            "/subscriptions/s/vm-a",
-            "protects",
-        )];
+        vm.attachments = vec![
+            Attachment {
+                kind: "disk".into(),
+                name: "data".into(),
+                id: Some("/subscriptions/s/disk-a".into()),
+                shared: false,
+                cost: None,
+            },
+            Attachment {
+                kind: "nsg".into(),
+                name: "nsg-a".into(),
+                id: Some("/subscriptions/s/nsg-a".into()),
+                shared: false,
+                cost: None,
+            },
+        ];
+        let nodes = vec![vnet, subnet, vm];
 
         // VNet plan: empty the subnet's members first (each leaf block in
         // its own order), no subnet step (it dies with the vnet), vnet last.
-        let plan = delete_plan(&t_with(nodes.clone(), edges.clone()), 0).unwrap();
+        let plan = delete_plan(&t_with(nodes.clone(), vec![]), 0).unwrap();
         let labels: Vec<&str> = plan.steps.iter().map(|s| s.label.as_str()).collect();
         assert_eq!(
             labels,
             vec![
                 "Virtual machine vm-a",
                 "disk data",
-                "Network security group nsg-a",
+                "nsg nsg-a",
                 "Virtual network vnet-a",
             ]
         );
@@ -1316,14 +1232,14 @@ mod tests {
         ));
 
         // Subnet plan: members first, then the subnet itself.
-        let plan = delete_plan(&t_with(nodes, edges), 1).unwrap();
+        let plan = delete_plan(&t_with(nodes, vec![]), 1).unwrap();
         let labels: Vec<&str> = plan.steps.iter().map(|s| s.label.as_str()).collect();
         assert_eq!(
             labels,
             vec![
                 "Virtual machine vm-a",
                 "disk data",
-                "Network security group nsg-a",
+                "nsg nsg-a",
                 "Subnet snet-a",
             ]
         );
@@ -1344,28 +1260,22 @@ mod tests {
         b.kind = "Microsoft.Network/virtualNetworks".into();
         b.container = true;
         b.parent_id = Some("/subscriptions/s/vnet-x".into());
-        // …plus one NSG protecting two VMs in the same box: excluded (its
-        // connections are 2) and noted once thanks to note-dedup.
+        // …plus one NSG folded shared onto two VMs in the same box: never a
+        // step, and noted once thanks to note-dedup.
+        let shared_nsg = Attachment {
+            kind: "nsg".into(),
+            name: "nsg-a".into(),
+            id: Some("/subscriptions/s/nsg-a".into()),
+            shared: true,
+            cost: None,
+        };
         let mut vm1 = arm_leaf("vm-1", "Virtual machine");
         vm1.parent_id = Some("/subscriptions/s/vnet-x".into());
+        vm1.attachments = vec![shared_nsg.clone()];
         let mut vm2 = arm_leaf("vm-2", "Virtual machine");
         vm2.parent_id = Some("/subscriptions/s/vnet-x".into());
-        let nsg = arm_leaf("nsg-a", "Network security group");
-        let t = t_with(
-            vec![a, b, vm1, vm2, nsg],
-            vec![
-                (
-                    "/subscriptions/s/nsg-a",
-                    "/subscriptions/s/vm-1",
-                    "protects",
-                ),
-                (
-                    "/subscriptions/s/nsg-a",
-                    "/subscriptions/s/vm-2",
-                    "protects",
-                ),
-            ],
-        );
+        vm2.attachments = vec![shared_nsg];
+        let t = t_with(vec![a, b, vm1, vm2], vec![]);
         let plan = delete_plan(&t, 0).unwrap();
         let labels: Vec<&str> = plan.steps.iter().map(|s| s.label.as_str()).collect();
         // Terminates; every leaf exactly once; the cyclic container child

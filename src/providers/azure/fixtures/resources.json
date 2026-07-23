@@ -314,5 +314,13 @@
     "resourceGroup": "rg-app",
     "tags": null,
     "type": "Microsoft.RecoveryServices/vaults"
+  },
+  {
+    "id": "/subscriptions/00000000-0000-0000-0000-000000000001/resourceGroups/rg-data/providers/Microsoft.Network/privateEndpoints/pe-blob",
+    "location": "westeurope",
+    "name": "pe-blob",
+    "resourceGroup": "rg-data",
+    "tags": null,
+    "type": "Microsoft.Network/privateEndpoints"
   }
 ]
