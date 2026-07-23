@@ -276,8 +276,21 @@ pub fn build_topology(inv: AzureInventory) -> Topology {
 
     // Public IPs referenced by a NIC fold into the NIC's anchor — the VM
     // when the NIC has one, otherwise the NIC itself. Unreferenced public
-    // IPs keep their own card.
+    // IPs keep their own card. NSGs fold the same way, like SSH keys do:
+    // onto every card they protect (nic-level refs, plus subnet-level refs
+    // applied to each anchor inside that subnet), flagged shared when that
+    // is more than one; only a fully detached NSG keeps its own card.
+    let subnet_nsg: HashMap<String, String> = inv
+        .vnets
+        .iter()
+        .flat_map(|v| &v.subnets)
+        .filter_map(|s| {
+            let nsg = s.network_security_group.as_ref()?.id.as_deref()?;
+            Some((norm(&s.id), norm(nsg)))
+        })
+        .collect();
     let mut pip_anchors: HashMap<String, Vec<String>> = HashMap::new();
+    let mut nsg_anchors: HashMap<String, Vec<String>> = HashMap::new();
     for nic in &inv.nics {
         let nic_id = norm(&nic.id);
         let anchor = match nic_vm.get(&nic_id) {
@@ -287,16 +300,34 @@ pub fn build_topology(inv: AzureInventory) -> Topology {
         if !resource_ids.contains(&anchor) {
             continue;
         }
+        let add_anchor = |map: &mut HashMap<String, Vec<String>>, key: String| {
+            let anchors = map.entry(key).or_default();
+            if !anchors.contains(&anchor) {
+                anchors.push(anchor.clone());
+            }
+        };
+        if let Some(nsg) = nic
+            .network_security_group
+            .as_ref()
+            .and_then(|r| r.id.as_deref())
+        {
+            add_anchor(&mut nsg_anchors, norm(nsg));
+        }
         for ip_config in &nic.ip_configurations {
             if let Some(pip) = ip_config
                 .public_ip_address
                 .as_ref()
                 .and_then(|p| p.id.as_deref())
             {
-                let anchors = pip_anchors.entry(norm(pip)).or_default();
-                if !anchors.contains(&anchor) {
-                    anchors.push(anchor.clone());
-                }
+                add_anchor(&mut pip_anchors, norm(pip));
+            }
+            if let Some(nsg) = ip_config
+                .subnet
+                .as_ref()
+                .and_then(|s| s.id.as_deref())
+                .and_then(|subnet| subnet_nsg.get(&norm(subnet)))
+            {
+                add_anchor(&mut nsg_anchors, nsg.clone());
             }
         }
     }
@@ -320,6 +351,22 @@ pub fn build_topology(inv: AzureInventory) -> Topology {
             for owner in anchors {
                 folded.entry(owner.clone()).or_default().push(Attachment {
                     kind: "public ip".into(),
+                    name: resource.name.clone(),
+                    id: Some(id.clone()),
+                    shared: anchors.len() > 1,
+                    cost: cost_of(&id),
+                });
+            }
+            fold_away.insert(id);
+            continue;
+        }
+        if ty == "microsoft.network/networksecuritygroups" {
+            let Some(anchors) = nsg_anchors.get(&id) else {
+                continue; // fully detached NSG keeps its own card
+            };
+            for owner in anchors {
+                folded.entry(owner.clone()).or_default().push(Attachment {
+                    kind: "nsg".into(),
                     name: resource.name.clone(),
                     id: Some(id.clone()),
                     shared: anchors.len() > 1,
@@ -471,7 +518,6 @@ pub fn build_topology(inv: AzureInventory) -> Topology {
 
     // Virtual networks (top-level containers) enriched with address space, each
     // holding its subnets, which in turn hold their member NICs.
-    let mut subnet_nsgs: Vec<(String, String)> = Vec::new(); // (nsg id, subnet id)
     for vnet in &inv.vnets {
         let vnet_id = norm(&vnet.id);
         if !index.contains_key(&vnet_id) {
@@ -508,13 +554,6 @@ pub fn build_topology(inv: AzureInventory) -> Topology {
             let prefix = subnet.address_prefix.clone().or_else(|| {
                 (!subnet.address_prefixes.is_empty()).then(|| subnet.address_prefixes.join(", "))
             });
-            if let Some(nsg) = subnet
-                .network_security_group
-                .as_ref()
-                .and_then(|r| r.id.as_deref())
-            {
-                subnet_nsgs.push((norm(nsg), norm(&subnet.id)));
-            }
             add_node(
                 &mut nodes,
                 &mut index,
@@ -623,15 +662,11 @@ pub fn build_topology(inv: AzureInventory) -> Topology {
         );
     }
 
-    // NSG associations declared on subnets (from the vnet listing).
-    for (nsg, subnet) in subnet_nsgs {
-        add_edge(nsg, subnet, EdgeKind::Network, "protects", &mut edges);
-    }
-
     // NICs anchor the network wiring. A NIC owned by a VM has been folded
     // into that VM's card, so everything the NIC implies — subnet membership,
-    // public IPs, NSG protection — re-anchors onto the VM itself: the VM
-    // renders inside its subnet, with the NIC as card subtext.
+    // public IPs, NSG protection (folded as card rows in the pre-pass) —
+    // re-anchors onto the VM itself: the VM renders inside its subnet, with
+    // the NIC as card subtext.
     for nic in &inv.nics {
         let nic_id = norm(&nic.id);
         let anchor_id = match nic_vm.get(&nic_id).filter(|vm| index.contains_key(*vm)) {
@@ -641,20 +676,6 @@ pub fn build_topology(inv: AzureInventory) -> Topology {
         let Some(&anchor_index) = index.get(&anchor_id) else {
             continue; // absent from the resource listing; skip rather than invent
         };
-        // NSG association from the nic listing.
-        if let Some(nsg) = nic
-            .network_security_group
-            .as_ref()
-            .and_then(|r| r.id.as_deref())
-        {
-            add_edge(
-                norm(nsg),
-                anchor_id.clone(),
-                EdgeKind::Network,
-                "protects",
-                &mut edges,
-            );
-        }
         // Nest the anchor into the NIC's subnet (first one wins). Public IPs
         // were folded into the anchor's card during the pre-pass.
         for ip_config in &nic.ip_configurations {
@@ -835,6 +856,21 @@ pub fn build_topology(inv: AzureInventory) -> Topology {
         );
     }
 
+    // Cost rows for resources that no longer exist (deleted mid-period)
+    // have no card to land on — surface the total instead of dropping it
+    // silently.
+    let mut warnings = inv.warnings;
+    let (gone_count, gone_total) = cost_map
+        .iter()
+        .filter(|(id, _)| !index.contains_key(*id) && !fold_away.contains(*id))
+        .fold((0usize, 0f64), |(n, sum), (_, cost)| (n + 1, sum + cost));
+    if gone_total >= 0.005 {
+        warnings.push(format!(
+            "{} of this period's cost belongs to {gone_count} resource(s) that no longer exist (deleted during the period)",
+            crate::model::format_cost(gone_total, currency.as_deref()),
+        ));
+    }
+
     let mut topology = Topology {
         provider: "azure".into(),
         scope_id: inv.account.id.clone(),
@@ -842,7 +878,7 @@ pub fn build_topology(inv: AzureInventory) -> Topology {
         nodes,
         edges,
         currency,
-        warnings: inv.warnings,
+        warnings,
     };
     crate::model::group_detached(&mut topology);
     topology
@@ -1011,6 +1047,7 @@ mod tests {
                 ("disk", "DataDisk_1"),
                 ("extension", "AADSSHLoginForLinux"),
                 ("nic", "nic-web-01"),
+                ("nsg", "nsg-web"),
                 ("public ip", "pip-web"),
                 ("restore point", "rpc-vm-web-01"),
                 ("ssh key", "key-admin"),
@@ -1220,8 +1257,12 @@ mod tests {
             by("vmss-runners").parent_id.as_deref(),
             Some(snet_a.as_str())
         );
-        // Public-access Postgres has no delegated subnet — stays free.
-        assert_eq!(by("pg-flex-pub").parent_id, None);
+        // Public-access Postgres has no delegated subnet and no edges — the
+        // category sweep parks it in the "Databases" standalone box.
+        assert_eq!(
+            by("pg-flex-pub").parent_id.as_deref(),
+            Some("cloudviz:group:category-databases")
+        );
         // The AKS node pool is listed by `az vmss list` too but must stay
         // inside its cluster, not jump into the subnet.
         assert_eq!(
@@ -1282,6 +1323,20 @@ mod tests {
     }
 
     #[test]
+    fn deleted_resource_costs_surface_as_warning() {
+        let t = build();
+        // costs.json carries a $4.75 row for a resource absent from the
+        // inventory — deleted mid-period; it must not vanish silently.
+        assert!(
+            t.warnings
+                .iter()
+                .any(|w| w.contains("$4.75") && w.contains("no longer exist")),
+            "missing deleted-cost warning: {:?}",
+            t.warnings
+        );
+    }
+
+    #[test]
     fn monitoring_debris_gathers_into_management_box() {
         let t = build();
         let bx = find(&t, "Monitoring");
@@ -1338,24 +1393,29 @@ mod tests {
     }
 
     #[test]
-    fn nsg_references_become_protects_edges() {
+    fn nsgs_fold_onto_the_cards_they_protect() {
         let t = build();
-        let protects: Vec<&TopologyEdge> = t
+        // nsg-web is referenced nic-level (nic-web-01) and subnet-level
+        // (snet-a); both re-anchor onto vm-web-01, so it folds there once,
+        // unshared, with no standalone card and no protects edges.
+        assert!(!t.nodes.iter().any(|n| n.name == "nsg-web"));
+        assert!(!t
             .edges
             .iter()
-            .filter(|e| e.label.as_deref() == Some("protects"))
-            .collect();
-        // subnet-level (vnet listing) + nic-level (nic listing, re-anchored
-        // onto the NIC's VM).
-        assert_eq!(protects.len(), 2);
-        for e in &protects {
-            assert!(e.source.contains("networksecuritygroups/nsg-web"));
-            assert_eq!(e.kind, EdgeKind::Network);
-        }
-        assert!(protects.iter().any(|e| e.target.contains("subnets/snet-a")));
-        assert!(protects
+            .any(|e| e.label.as_deref() == Some("protects")));
+        let vm = find(&t, "vm-web-01");
+        let nsg = vm
+            .attachments
             .iter()
-            .any(|e| e.target.contains("virtualmachines/vm-web-01")));
+            .find(|a| a.kind == "nsg")
+            .expect("nsg folded onto the VM");
+        assert_eq!(nsg.name, "nsg-web");
+        assert!(!nsg.shared);
+        assert!(nsg
+            .id
+            .as_deref()
+            .unwrap()
+            .ends_with("/networksecuritygroups/nsg-web"));
     }
 
     #[test]

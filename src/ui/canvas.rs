@@ -593,7 +593,7 @@ fn draw_card(
             // network green, SSH key = security red); hardware stays muted.
             let icon_color = match att.kind.as_str() {
                 "public ip" => c32(theme.category_color(ResourceCategory::Network)),
-                "ssh key" => c32(theme.category_color(ResourceCategory::Security)),
+                "ssh key" | "nsg" => c32(theme.category_color(ResourceCategory::Security)),
                 "restore point" => c32(theme.category_color(ResourceCategory::Compute)),
                 _ => c32(theme.ink_3),
             };

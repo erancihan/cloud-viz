@@ -318,14 +318,8 @@ pub fn demo_topology() -> Topology {
             Network,
             vec![],
         ),
-        leaf(
-            "rg-network",
-            "nsg-web",
-            "Microsoft.Network/networkSecurityGroups",
-            "Network security group",
-            Network,
-            vec![],
-        ),
+        // (nsg-web folds onto the web VMs' cards below, like the Azure
+        // mapper folds subnet-level NSGs — no standalone card.)
         leaf(
             "rg-app",
             "acrcontoso",
@@ -546,6 +540,7 @@ pub fn demo_topology() -> Topology {
             ("disk", "disk-web-01-data", false, Some(3.20)),
             ("extension", "AADSSHLoginForLinux", false, None),
             ("nic", "nic-web-01", false, None),
+            ("nsg", "nsg-web", true, None),
             ("restore point", "rpc-vm-web-01", false, None),
             ("ssh key", "ssh-admin", true, None),
         ],
@@ -554,6 +549,7 @@ pub fn demo_topology() -> Topology {
         "vm-web-02",
         &[
             ("nic", "nic-web-02", false, None),
+            ("nsg", "nsg-web", true, None),
             ("ssh key", "ssh-admin", true, None),
         ],
     );
@@ -598,12 +594,6 @@ pub fn demo_topology() -> Topology {
     // Only dependency edges remain; subnet, vnet, and plan membership is
     // shown by containment, and NICs/disks/extensions/slots by attachments.
     let edge_defs: Vec<(String, String, EdgeKind, &str)> = vec![
-        (
-            id("rg-network", "nsg-web"),
-            snet_web.clone(),
-            EdgeKind::Network,
-            "protects",
-        ),
         (
             id("rg-data", "sqldb-orders"),
             id("rg-data", "sqlsrv-main"),
@@ -717,9 +707,9 @@ mod tests {
         for vm in ["vm-web-01", "vm-web-02"] {
             assert_eq!(by_name(vm).parent_id.as_deref(), Some(snet_web.id.as_str()));
         }
-        // NIC/disk/extension/restore point/ssh key ride on the VM card.
+        // NIC/disk/extension/NSG/restore point/ssh key ride on the VM card.
         assert!(!t.nodes.iter().any(|n| n.name.starts_with("nic-web")));
-        assert_eq!(by_name("vm-web-01").attachments.len(), 5);
+        assert_eq!(by_name("vm-web-01").attachments.len(), 6);
         // The shared SSH key is flagged on both VMs and has no node; the
         // unused key keeps its standalone card.
         for vm in ["vm-web-01", "vm-web-02"] {
@@ -751,6 +741,13 @@ mod tests {
             ("Container registries", "acrcontoso", "Detached"),
             ("Network security groups", "nsg-stale", "Detached"),
             ("Container instances", "aci-jobs", "Detached"),
+            // The category sweep parks everything unwired and top-level.
+            ("Databases", "cosmos-catalog", "Standalone"),
+            ("Databases", "redis-session", "Standalone"),
+            ("Storage", "stcontosoprod", "Standalone"),
+            ("Security", "kv-secrets", "Standalone"),
+            ("Integration", "sb-events", "Standalone"),
+            ("Networking", "lb-web", "Standalone"),
         ] {
             let g = by_name(group);
             assert!(g.container, "{group} should be a container");
@@ -762,6 +759,21 @@ mod tests {
             .attachments
             .iter()
             .any(|a| a.kind == "restore point"));
+        // A single edge keeps a card free: the SQL pair stays out of the
+        // boxes. The protecting NSG folds onto both web VMs (shared) and
+        // has no standalone card.
+        assert_eq!(by_name("sqlsrv-main").parent_id, None);
+        assert_eq!(by_name("sqldb-orders").parent_id, None);
+        assert!(!t.nodes.iter().any(|n| n.name == "nsg-web"));
+        for vm in ["vm-web-01", "vm-web-02"] {
+            let nsg = by_name(vm)
+                .attachments
+                .iter()
+                .find(|a| a.kind == "nsg")
+                .unwrap();
+            assert_eq!(nsg.name, "nsg-web");
+            assert!(nsg.shared);
+        }
         // Monitoring debris — workspace, App Insights, action group —
         // gathers into the "Monitoring" box (kind-prefix match, so the
         // lowercase `microsoft.insights` namespace lands there too).
