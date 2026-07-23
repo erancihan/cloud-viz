@@ -146,7 +146,13 @@ impl Attachment {
     pub fn secondary(&self) -> bool {
         matches!(
             self.kind.as_str(),
-            "ssh key" | "public ip" | "restore point" | "nsg" | "snapshot" | "private endpoint"
+            "ssh key"
+                | "public ip"
+                | "restore point"
+                | "nsg"
+                | "snapshot"
+                | "private endpoint"
+                | "backup vault"
         )
     }
 }
@@ -195,7 +201,6 @@ fn delete_rank(kind: &str) -> Option<u8> {
 /// Prebuilt lookups shared by every block of one delete plan.
 struct PlanCtx<'a> {
     topology: &'a Topology,
-    by_id: HashMap<&'a str, usize>,
     children: HashMap<&'a str, Vec<usize>>,
 }
 
@@ -221,12 +226,6 @@ pub fn delete_plan(topology: &Topology, index: usize) -> Option<DeletePlan> {
     }
     let ctx = PlanCtx {
         topology,
-        by_id: topology
-            .nodes
-            .iter()
-            .enumerate()
-            .map(|(i, n)| (n.id.as_str(), i))
-            .collect(),
         children: children_index(topology),
     };
 
@@ -312,9 +311,8 @@ fn collect_children(
     }
 }
 
-/// One leaf's self-contained ordered block: the resource, its attachments,
-/// and any single-connection edge dependents, appended to `steps` in
-/// dependency order.
+/// One leaf's self-contained ordered block: the resource and its
+/// attachments, appended to `steps` in dependency order.
 fn leaf_block(
     ctx: &PlanCtx,
     index: usize,
@@ -334,6 +332,15 @@ fn leaf_block(
         ));
     }
     for att in &node.attachments {
+        // A vault is heavy and multi-tenant — deleting it here would be
+        // wrong even when it protects only this resource. Warning only.
+        if att.kind == "backup vault" {
+            notes.push(format!(
+                "backup vault {} backs up this resource — disable its protection before deleting",
+                att.name
+            ));
+            continue;
+        }
         if att.shared {
             notes.push(format!(
                 "{} {} is shared with other resources — left in place",
@@ -364,22 +371,6 @@ fn leaf_block(
                 },
             ));
         }
-    }
-    // A vault backing this resource up must release it before deletion —
-    // dependents themselves live on the card as attachments, so edges only
-    // ever contribute warnings, never extra delete commands.
-    for edge in &ctx.topology.edges {
-        if edge.target != node.id || edge.label.as_deref() != Some("backs up") {
-            continue;
-        }
-        let Some(&src) = ctx.by_id.get(edge.source.as_str()) else {
-            continue;
-        };
-        let dep = &ctx.topology.nodes[src];
-        notes.push(format!(
-            "{} {} backs up this resource — disable its protection before deleting",
-            dep.kind_label, dep.name
-        ));
     }
     // Stable sort: same-rank entries keep their card order.
     ranked.sort_by_key(|(rank, _)| *rank);
@@ -1153,28 +1144,25 @@ mod tests {
     }
 
     #[test]
-    fn delete_plan_edges_only_warn_never_delete() {
-        // Dependents live on cards as attachments now — edges contribute
-        // warnings only: a vault's "backs up" becomes a note, and an
-        // "attached" edge from a VM must never drag the VM into the plan.
+    fn delete_plan_vaults_only_warn_and_edges_never_delete() {
+        // A folded backup vault is warning-only — even unshared, deleting a
+        // vault as card cleanup would be wrong — and an inbound "attached"
+        // edge from a VM must never drag the VM into the plan.
+        let mut disk = arm_leaf("disk-a", "Managed disk");
+        disk.attachments = vec![Attachment {
+            kind: "backup vault".into(),
+            name: "rsv-a".into(),
+            id: Some("/subscriptions/s/rsv-a".into()),
+            shared: false,
+            cost: None,
+        }];
         let t = t_with(
-            vec![
-                arm_leaf("disk-a", "Managed disk"),
-                arm_leaf("vm-a", "Virtual machine"),
-                arm_leaf("rsv-a", "Recovery Services vault"),
-            ],
-            vec![
-                (
-                    "/subscriptions/s/vm-a",
-                    "/subscriptions/s/disk-a",
-                    "attached",
-                ),
-                (
-                    "/subscriptions/s/rsv-a",
-                    "/subscriptions/s/disk-a",
-                    "backs up",
-                ),
-            ],
+            vec![disk, arm_leaf("vm-a", "Virtual machine")],
+            vec![(
+                "/subscriptions/s/vm-a",
+                "/subscriptions/s/disk-a",
+                "attached",
+            )],
         );
         let plan = delete_plan(&t, 0).unwrap();
         assert_eq!(plan.steps.len(), 1);

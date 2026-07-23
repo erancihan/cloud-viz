@@ -376,6 +376,23 @@ pub fn build_topology(inv: AzureInventory) -> Topology {
         .filter_map(|pe| Some((norm(&pe.id), norm(pe.target_id()?))))
         .collect();
 
+    // Recovery Services vault -> everything it backs up (from the per-vault
+    // item listing). A vault protecting nothing keeps its own card.
+    let mut vault_owners: HashMap<String, Vec<String>> = HashMap::new();
+    for (vault_id, item) in &inv.backup_items {
+        let Some(protected) = item.protected_id() else {
+            continue;
+        };
+        let protected = norm(protected);
+        if !resource_ids.contains(&protected) {
+            continue;
+        }
+        let owners = vault_owners.entry(norm(vault_id)).or_default();
+        if !owners.contains(&protected) {
+            owners.push(protected);
+        }
+    }
+
     let mut folded: HashMap<String, Vec<Attachment>> = HashMap::new();
     let mut fold_away: HashSet<String> = HashSet::new();
     for resource in &inv.resources {
@@ -391,6 +408,22 @@ pub fn build_topology(inv: AzureInventory) -> Topology {
                     name: resource.name.clone(),
                     id: Some(id.clone()),
                     shared: anchors.len() > 1,
+                    cost: cost_of(&id),
+                });
+            }
+            fold_away.insert(id);
+            continue;
+        }
+        if ty == "microsoft.recoveryservices/vaults" {
+            let Some(owners) = vault_owners.get(&id) else {
+                continue; // a vault protecting nothing keeps its own card
+            };
+            for owner in owners {
+                folded.entry(owner.clone()).or_default().push(Attachment {
+                    kind: "backup vault".into(),
+                    name: resource.name.clone(),
+                    id: Some(id.clone()),
+                    shared: owners.len() > 1,
                     cost: cost_of(&id),
                 });
             }
@@ -849,21 +882,6 @@ pub fn build_topology(inv: AzureInventory) -> Topology {
         }
     }
 
-    // Recovery Services vaults protect VMs (and other sources) — surface
-    // each protected item as a "backs up" edge from the vault.
-    for (vault_id, item) in &inv.backup_items {
-        let Some(protected) = item.protected_id() else {
-            continue;
-        };
-        add_edge(
-            norm(vault_id),
-            norm(protected),
-            EdgeKind::Association,
-            "backs up",
-            &mut edges,
-        );
-    }
-
     // Cost rows for resources that no longer exist (deleted mid-period)
     // have no card to land on — surface the total instead of dropping it
     // silently.
@@ -1297,10 +1315,19 @@ mod tests {
         let diag = edge("boot diagnostics");
         assert!(diag.source.ends_with("/vm-web-01"));
         assert!(diag.target.ends_with("/storageaccounts/ststray"));
-        // The vault backs up vm-web-02.
-        let backup = edge("backs up");
-        assert!(backup.source.ends_with("/vaults/rsv-main"));
-        assert!(backup.target.ends_with("/vm-web-02"));
+        // The vault folds onto the card it backs up — no node, no edge.
+        assert!(!t.nodes.iter().any(|n| n.name == "rsv-main"));
+        assert!(!t
+            .edges
+            .iter()
+            .any(|e| e.label.as_deref() == Some("backs up")));
+        let vault = find(&t, "vm-web-02")
+            .attachments
+            .iter()
+            .find(|a| a.kind == "backup vault")
+            .expect("vault folded onto the protected VM");
+        assert_eq!(vault.name, "rsv-main");
+        assert!(!vault.shared);
     }
 
     #[test]
